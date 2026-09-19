@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef } from 'react'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import { useStore, type Panel } from '../store'
 import { sanitisePanelHtml } from './sanitise'
+import { t as translate } from '../lib/i18n'
 
 /**
  * Heads-up display panels.
@@ -64,7 +65,7 @@ function watchMedia(node: HTMLDivElement | null) {
   node.querySelectorAll('img').forEach((img) => {
     if (img.dataset.watched) return
     img.dataset.watched = '1'
-    const fail = () => replaceWithNote(img, 'image unavailable')
+    const fail = () => replaceWithNote(img, translate(useStore.getState().lang, 'imageUnavailable'))
     if (img.complete && img.naturalWidth === 0) fail()
     else img.addEventListener('error', fail, { once: true })
   })
@@ -72,7 +73,7 @@ function watchMedia(node: HTMLDivElement | null) {
   node.querySelectorAll('video').forEach((video) => {
     if (video.dataset.watched) return
     video.dataset.watched = '1'
-    const fail = () => replaceWithNote(video, 'video unavailable')
+    const fail = () => replaceWithNote(video, translate(useStore.getState().lang, 'videoUnavailable'))
     // A <video> the sanitiser stripped the src from never attempts a load, so
     // it never errors either — it just sits there as a black rectangle. The
     // <img> equivalent is caught by naturalWidth; this is the check that stands

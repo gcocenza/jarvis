@@ -276,6 +276,37 @@ body::after {
   clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
 }
 .mute-btn:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* Language, as one control split in two. Borrows the rail's chamfered corner
+   and letter-spacing so it reads as part of the instrument panel rather than a
+   web form dropped into it. The live half is filled rather than merely tinted:
+   at 9px, a colour difference alone is not a state you can read at a glance. */
+.seg {
+  pointer-events: auto;
+  display: flex;
+  margin-top: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+}
+.seg-btn {
+  flex: 1;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 0;
+  color: inherit;
+  opacity: 0.55;
+  font-family: inherit;
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.seg-btn:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.seg-btn.is-on {
+  background: color-mix(in srgb, var(--accent) 34%, transparent);
+  opacity: 1;
+  text-shadow: 0 0 8px var(--accent);
+}
 .mute-icon {
   width: 6px;
   height: 6px;

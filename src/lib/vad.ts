@@ -1,4 +1,5 @@
 import { echoStrict, getMic } from './audio'
+import { t, type Lang } from './i18n'
 
 /**
  * Voice-activity detection and segment capture.
@@ -47,6 +48,8 @@ export type VadHandlers = {
    * listening for as long as you care to keep talking at it.
    */
   onSilence: (dead: boolean) => void
+  /** Read fresh, so a message written now is in the language on screen now. */
+  lang: () => Lang
 }
 
 export type Vad = {
@@ -150,14 +153,14 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
   } catch (err) {
     h.onError(
       err instanceof DOMException && err.name === 'NotAllowedError'
-        ? 'Microphone access denied — voice input is unavailable.'
-        : 'No microphone available.',
+        ? t(h.lang(), 'errMicDenied')
+        : t(h.lang(), 'errNoMic'),
     )
     return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false, dead: false }) }
   }
 
   if (typeof MediaRecorder === 'undefined') {
-    h.onError('This browser cannot record audio — voice input is unavailable.')
+    h.onError(t(h.lang(), 'errNoRecorder'))
     return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false, dead: false }) }
   }
 

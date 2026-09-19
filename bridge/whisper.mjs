@@ -136,9 +136,10 @@ export function startWhisper() {
  *
  * @param {Buffer} buffer
  * @param {string} contentType  the MediaRecorder mime, used only to pick an ext
+ * @param {string} [lang]       ISO 639-1; the worker's default when omitted
  * @returns {Promise<string>}
  */
-export function whisperTranscribe(buffer, contentType) {
+export function whisperTranscribe(buffer, contentType, lang) {
   if (!ready || !proc) return Promise.reject(new Error('local STT not ready'))
 
   const run = () =>
@@ -172,7 +173,7 @@ export function whisperTranscribe(buffer, contentType) {
       }
       pending = { resolve: done(resolve), reject: done(reject) }
       try {
-        proc.stdin.write(file + '\n')
+        proc.stdin.write(JSON.stringify({ path: file, lang: lang ?? null }) + '\n')
       } catch (err) {
         clearTimeout(timer)
         pending = null

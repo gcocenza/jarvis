@@ -6,7 +6,8 @@ warm on purpose: reloading the model per request is what makes local Whisper
 feel slow, so the bridge spawns this once and streams paths to it.
 
 Protocol:
-  stdin  : one absolute audio-file path per line
+  stdin  : one JSON object per line, {"path": "/abs/clip.webm", "lang": "pt"}
+           ("lang" optional; falls back to JARVIS_STT_LANG)
   stdout : {"ready": true}            once, when the model is loaded
            {"text": "..."}            per transcribed path (text may be "")
            {"error": "..."}           if a single transcription failed
@@ -45,17 +46,27 @@ def main() -> int:
     sys.stdout.flush()
 
     for line in sys.stdin:
-        path = line.strip()
-        if not path:
+        line = line.strip()
+        if not line:
+            continue
+        # One JSON object per request: {"path": "...", "lang": "pt"}. It used to
+        # be a bare path, which was fine while the language was fixed at boot —
+        # it is a button on screen now, so it has to travel with the clip.
+        try:
+            req = json.loads(line)
+            path = req["path"]
+            clip_lang = req.get("lang") or lang
+        except (ValueError, KeyError, TypeError):
+            sys.stdout.write(json.dumps({"error": f"bad request line: {line[:120]}"}) + "\n")
+            sys.stdout.flush()
             continue
         try:
             # The browser's VAD already trimmed silence around the utterance, so
             # no vad_filter here (it would add an onnxruntime dependency for no
-            # gain). Language comes from the environment: the default .en models
-            # only do English, but pointing JARVIS_WHISPER_MODEL at a
-            # multilingual one (small, medium) and setting JARVIS_STT_LANG makes
-            # the local fallback speak whatever the cloud providers were.
-            segments, _info = model.transcribe(path, language=lang, beam_size=1)
+            # gain). The .en models are English whatever is asked of them, so a
+            # language other than English also needs JARVIS_WHISPER_MODEL
+            # pointed at a multilingual build (small, medium).
+            segments, _info = model.transcribe(path, language=clip_lang, beam_size=1)
             text = "".join(seg.text for seg in segments).strip()
             sys.stdout.write(json.dumps({"text": text}) + "\n")
         except Exception as exc:  # noqa: BLE001 - one bad clip must not kill the worker

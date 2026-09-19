@@ -8,6 +8,8 @@ import {
 } from '../config'
 import * as kokoro from './kokoro'
 import { caps } from './capabilities'
+import { iso } from './i18n'
+import { useStore } from '../store'
 
 /**
  * Speech output.
@@ -744,7 +746,10 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
       const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text }),
+        // The language rides with the text rather than being configured once on
+        // the bridge, because it can change between one sentence and the next
+        // now that it is a button on screen.
+        body: JSON.stringify({ text, lang: iso(useStore.getState().lang) }),
       })
       if (res.ok) return URL.createObjectURL(await res.blob())
     } catch {

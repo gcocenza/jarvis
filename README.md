@@ -308,8 +308,9 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_ALLOWED_ORIGINS` | local dev | Extra WebSocket origins to accept |
 | `JARVIS_ALLOW_NO_ORIGIN` | off | Accept connections with no `Origin` header |
 | `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
-| `JARVIS_VOICE_ID` | George (en, British) | ElevenLabs voice id — the voice carries the accent, so this is what picks the language you hear |
-| `JARVIS_TTS_LANG` | — | ISO 639-1 language to enforce, e.g. `pt`. Normalises numbers and dates in that language; flash/turbo v2.5 only |
+| `JARVIS_VOICE_ID` | George (en, British) | Fallback ElevenLabs voice id |
+| `JARVIS_VOICE_ID_<LANG>` | — | Voice per language, e.g. `JARVIS_VOICE_ID_PT`. The voice carries the accent, so this is what the language button really switches |
+| `JARVIS_TTS_LANG` | — | ISO 639-1 default when the page does not name one; flash/turbo v2.5 only |
 | `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice, and Scribe as a transcriber |
 | `GROQ_API_KEY` | — | Optional; transcribes with Groq Whisper, tried first (fastest, multilingual) |
 | `JARVIS_GROQ_STT_MODEL` | `whisper-large-v3-turbo` | Groq transcription model |
@@ -344,6 +345,32 @@ You do not have to touch a flag. Either:
 
 Either way, `/health` starts reporting the capability and the browser picks it up
 on the next boot.
+
+### Switching language
+
+The `PT` / `EN` pair on the right rail moves the whole interface in one click:
+on-screen text, the lines he speaks while a tool runs, the wake word, the
+transcription language and the voice itself. The choice is remembered.
+
+Give each language its own voice — an English voice reading Portuguese is the
+accent problem, not the language setting:
+
+```sh
+export JARVIS_VOICE_ID_PT=<a Brazilian voice id>
+export JARVIS_VOICE_ID_EN=JBFqnCBsd6RMkjVDRZzb
+```
+
+Two things deliberately stay put. The boot log is set dressing, not language.
+And nothing tells the model which language to answer in — it follows whoever is
+speaking to it, which is what you want and is already steered by the
+transcription language.
+
+The local Whisper fallback takes the language per clip now, but the default
+`base.en` model is English whatever it is asked for: set
+`JARVIS_WHISPER_MODEL=small` for the fallback to follow the button too.
+
+Strings live in `src/lib/i18n.ts`, one table, no i18n library.
+`npx tsx scripts/check-i18n.ts` fails on an untranslated or empty entry.
 
 ### Hearing you
 

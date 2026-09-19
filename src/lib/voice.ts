@@ -3,6 +3,7 @@ import { getMic } from './audio'
 import { speakingNow, speakingSince } from './tts'
 import { startVad, type Vad } from './vad'
 import { caps } from './capabilities'
+import { iso, t, type Lang } from './i18n'
 
 /**
  * The voice loop.
@@ -37,6 +38,9 @@ export type VoiceMode =
 export type VoiceHandlers = {
   /** Read fresh on every result, so the app never has to re-subscribe. */
   mode: () => VoiceMode
+  /** Read fresh too, for the same reason: the language can change mid-session
+   *  and the next utterance should already be transcribed in the new one. */
+  lang: () => Lang
   /** Fired on his name, from a partial — waiting for endpointing feels slow.
    *  `trailing` is whatever followed it, so "Jarvis, what's the weather" is
    *  one breath rather than two turns. */
@@ -83,9 +87,17 @@ const WAKE_DEBOUNCE = 1500
  * Jervis, Jarvys or Java's for a perfectly clear utterance — every one of which
  * used to be silently discarded, so the wake word "just didn't work" with no
  * indication why. Better a rare false wake than a name that does not answer.
+ *
+ * The Portuguese half is the same problem in another language. A Brazilian
+ * transcriber hears the English prefixes as "ei", "ô" or "opa", and the name
+ * itself comes back as Jarbas or Charles often enough to matter — the vowel
+ * that English puts in "Jar-" is not one Portuguese has. One regex serves both
+ * languages rather than one per language, because the wake word has to work
+ * while the interface is still set to the wrong one: that is precisely when
+ * you need to reach him to change it.
  */
 const WAKE =
-  /\b(?:hey|hi|ok|okay|yo)?\s*(?:jarvis|jarvys|jervis|jarvis's|travis|jarviss|java's|jarv)\b(?!'s)/i
+  /\b(?:hey|hi|ok|okay|yo|ei|ai|oi|opa|ô|o)?\s*(?:jarvis|jarvys|jervis|jarvis's|travis|jarviss|java's|jarv|jarvez|jarves|charles|jarbas)\b(?!'s)/i
 
 /** Everything after the wake phrase, which is usually the actual command. */
 function afterWake(text: string): string {
@@ -416,8 +428,8 @@ export async function startVoice(h: VoiceHandlers): Promise<Voice> {
     diag.lastError = 'mic'
     h.onError(
       err instanceof DOMException && err.name === 'NotAllowedError'
-        ? 'Microphone access denied — voice input is unavailable.'
-        : 'No microphone available.',
+        ? t(h.lang(), 'errMicDenied')
+        : t(h.lang(), 'errNoMic'),
     )
     return { stop: () => {}, live: () => false }
   }
@@ -473,7 +485,9 @@ async function startBridgeVoice(h: VoiceHandlers): Promise<Voice> {
     if (mode === 'deaf') return
     const t0 = performance.now()
     try {
-      const res = await fetch(`${BRIDGE_HTTP_URL}/stt`, {
+      // Same reasoning as /tts: the language is per request, not per bridge,
+      // because the button can move it mid-conversation.
+      const res = await fetch(`${BRIDGE_HTTP_URL}/stt?lang=${iso(h.lang())}`, {
         method: 'POST',
         headers: { 'content-type': blob.type || 'audio/webm' },
         body: blob,
@@ -581,6 +595,7 @@ async function startBridgeVoice(h: VoiceHandlers): Promise<Voice> {
       diag.running = false
       h.onError(message)
     },
+    lang: h.lang,
     onSilence: (isDead) => {
       diag.noInput = isDead
       diag.lastError = isDead ? 'no input' : ''
@@ -631,7 +646,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   const Ctor =
     (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
   if (!Ctor) {
-    h.onError('This browser has no speech recognition — use Chrome or Edge, or run the bridge for transcription.')
+    h.onError(t(h.lang(), 'errNoRecognition'))
     return { stop: () => {}, live: () => false }
   }
 
@@ -816,7 +831,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
         stopped = true
         diag.running = false
-        h.onError('Microphone access was refused — voice input is unavailable.')
+        h.onError(t(h.lang(), 'errMicRefused'))
       }
     }
     rec.onend = () => {

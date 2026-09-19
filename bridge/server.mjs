@@ -693,6 +693,25 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
 const TTS_LANG = process.env.JARVIS_TTS_LANG?.trim() || null
 
 /**
+ * A voice per language.
+ *
+ * The accent lives in the voice, so switching language without switching voice
+ * gets you a British actor reading Portuguese — which is the exact complaint
+ * this started from. JARVIS_VOICE_ID_PT / _EN name the voice for each, and
+ * JARVIS_VOICE_ID stays the fallback for anything not named.
+ */
+const voiceFor = (lang) => {
+  const named = lang && process.env[`JARVIS_VOICE_ID_${String(lang).toUpperCase()}`]?.trim()
+  return named || VOICE_ID
+}
+/** ISO 639-1 from a request, or the bridge default. Anything that is not two
+ *  plain letters is ignored rather than forwarded to the API. */
+const langFrom = (raw) => {
+  const v = typeof raw === 'string' ? raw.trim().toLowerCase() : ''
+  return /^[a-z]{2}$/.test(v) ? v : TTS_LANG
+}
+
+/**
  * Fish Audio voice. When FISH_AUDIO_API_KEY is set it takes over /tts, speaking
  * in the cloned voice below with a delivery style prepended as inline tags.
  * Fish bills the REST API from "API credit", which is separate from platform
@@ -723,6 +742,7 @@ const FISH_STYLE = process.env.JARVIS_FISH_STYLE ?? '[calm] [composed]'
 const GROQ_KEY = process.env.GROQ_API_KEY ?? null
 const GROQ_STT_MODEL = process.env.JARVIS_GROQ_STT_MODEL ?? 'whisper-large-v3-turbo'
 /** ISO-639-1 hint. Unset means let the model detect it, which it does well. */
+/** Fallback transcription language when the page does not name one. */
 const STT_LANG = process.env.JARVIS_STT_LANG ?? null
 
 /** Scribe gets no codec header, so the filename extension is the only hint. */
@@ -733,11 +753,11 @@ function audioExt(type) {
   return 'webm'
 }
 
-async function groqTranscribe(audio, type) {
+async function groqTranscribe(audio, type, lang) {
   const form = new FormData()
   form.append('model', GROQ_STT_MODEL)
   form.append('file', new Blob([audio], { type }), `speech.${audioExt(type)}`)
-  if (STT_LANG) form.append('language', STT_LANG)
+  if (lang) form.append('language', lang)
   const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',
     headers: { authorization: `Bearer ${GROQ_KEY}` },
@@ -747,11 +767,11 @@ async function groqTranscribe(audio, type) {
   return ((await r.json()).text ?? '').trim()
 }
 
-async function scribeTranscribe(audio, type) {
+async function scribeTranscribe(audio, type, lang) {
   const form = new FormData()
   form.append('model_id', 'scribe_v1')
   form.append('file', new Blob([audio], { type }), `speech.${audioExt(type)}`)
-  if (STT_LANG) form.append('language_code', STT_LANG)
+  if (lang) form.append('language_code', lang)
   const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
     method: 'POST',
     headers: { 'xi-api-key': elevenKey() },
@@ -1149,8 +1169,9 @@ const handleRequest = async (req, res) => {
     // Inside a try: this handler is async with nothing catching its rejection,
     // so a malformed body used to take the entire bridge down with it.
     let text
+    let lang
     try {
-      ;({ text } = JSON.parse(body || '{}'))
+      ;({ text, lang } = JSON.parse(body || '{}'))
     } catch {
       res.writeHead(400, cors)
       return res.end('bad json')
@@ -1176,7 +1197,7 @@ const handleRequest = async (req, res) => {
             }),
           })
         : await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream` +
+        `https://api.elevenlabs.io/v1/text-to-speech/${voiceFor(langFrom(lang))}/stream` +
           // 22kHz mono is half the bytes of 44kHz and indistinguishable through
           // a laptop speaker; optimize_streaming_latency=3 trades a little
           // prosody for a much earlier first byte.
@@ -1189,7 +1210,7 @@ const handleRequest = async (req, res) => {
             // Flash is the low-latency model — a conversation needs speed more
             // than it needs the last few percent of quality.
             model_id: 'eleven_flash_v2_5',
-            ...(TTS_LANG ? { language_code: TTS_LANG } : {}),
+            ...(langFrom(lang) ? { language_code: langFrom(lang) } : {}),
             voice_settings: {
               stability: 0.4,
               similarity_boost: 0.75,
@@ -1225,7 +1246,7 @@ const handleRequest = async (req, res) => {
   // use, and a server-side transcriber cannot. Detecting that the user is
   // speaking at all is done locally with voice-activity detection, which never
   // touches this endpoint; this is only for the words.
-  if (req.method === 'POST' && req.url === '/stt') {
+  if (req.method === 'POST' && req.url.startsWith('/stt')) {
     const chain = sttChain()
     // Nothing can transcribe at all. Say so plainly rather than timing out.
     if (!chain.length) {
@@ -1267,10 +1288,14 @@ const handleRequest = async (req, res) => {
     // class of bug this replaces was a transcriber failing in a way nobody
     // could see from the outside.
     const audio = Buffer.concat(chunks)
+    // The page says which language it is speaking; the bridge default covers a
+    // caller that does not, and an unparseable value is dropped rather than
+    // passed upstream.
+    const lang = langFrom(new URL(req.url, 'http://localhost').searchParams.get('lang')) ?? STT_LANG
     const failures = []
     for (const [name, run] of chain) {
       try {
-        const text = await run(audio, type)
+        const text = await run(audio, type, lang)
         if (failures.length) {
           console.warn(`[jarvis] stt fell back to ${name} after ${failures.join('; ')}`)
         }

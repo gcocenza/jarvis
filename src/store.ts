@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { BridgeSession } from './lib/bridge'
+import type { Lang } from './lib/i18n'
 
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
@@ -61,6 +62,17 @@ export type Blade = {
  *  loud interruption still barges in. strict = the platform's voice isolation
  *  where the browser offers it, and nothing he hears while speaking counts. */
 export type EchoGuard = 'standard' | 'strict'
+
+const LANG_KEY = 'jarvis.lang'
+/** Remembered across reloads: switching language every time you open the page
+ *  would make the setting useless to the person who only ever wants one. */
+const savedLang = (): Lang => {
+  try {
+    return localStorage.getItem(LANG_KEY) === 'pt' ? 'pt' : 'en'
+  } catch {
+    return 'en'
+  }
+}
 
 const ECHO_KEY = 'jarvis.echoGuard'
 const savedEcho = (): EchoGuard => {
@@ -257,6 +269,10 @@ type State = {
    *  rather than an error banner: it persists while it is true, and the banner
    *  would clear itself after seven seconds and leave the interface lying. */
   noInput: boolean
+  /** Interface language. Drives the on-screen text, the spoken filler lines,
+   *  the wake word, the transcription language and the speaking voice.
+   *  Persisted across reloads. */
+  lang: Lang
   /** Echo and noise handling for the microphone. Persisted across reloads. */
   echoGuard: EchoGuard
   /** Set when the user chose "Skip boot up": the boot overlay never shows and
@@ -294,6 +310,7 @@ type State = {
   setLooking: (why: string | null) => void
   setBootNote: (n: string) => void
   setMuted: (m: boolean) => void
+  setLang: (lang: Lang) => void
   setEchoGuard: (g: EchoGuard) => void
   setSkipBoot: (skip: boolean) => void
   enqueue: (text: string) => void
@@ -349,6 +366,7 @@ export const useStore = create<State>((set) => ({
   bootNote: '',
   muted: true,
   noInput: false,
+  lang: savedLang(),
   echoGuard: savedEcho(),
   skipBoot: false,
   queue: [],
@@ -358,6 +376,14 @@ export const useStore = create<State>((set) => ({
 
   setVoice: (voice) => set({ voice }),
   setMuted: (muted) => set({ muted }),
+  setLang: (lang) => {
+    try {
+      localStorage.setItem(LANG_KEY, lang)
+    } catch {
+      /* private mode: the setting lasts the session */
+    }
+    set({ lang })
+  },
   setEchoGuard: (echoGuard) => {
     try {
       localStorage.setItem(ECHO_KEY, echoGuard)

@@ -1,4 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
+import { useStore } from '../store'
+import { t as translate, type StringKey } from '../lib/i18n'
 
 /**
  * What your hands can do.
@@ -11,15 +13,16 @@ import { AnimatePresence, motion } from 'framer-motion'
  * it leaves the instant hand mode is turned off.
  */
 
-const MOVES: { gesture: string; hand: string; does: string }[] = [
-  { gesture: 'point', hand: '☝', does: 'move the cursor' },
-  { gesture: 'pinch', hand: '🤏', does: 'grab a blade · move it · press' },
-  { gesture: 'open', hand: '🖐', does: 'let go' },
-  { gesture: 'peace', hand: '✌', does: 'two fingers up-down to scroll' },
-  { gesture: 'frame', hand: '📐', does: 'two L-corners to resize' },
+const MOVES: { gesture: string; hand: string; does: StringKey }[] = [
+  { gesture: 'point', hand: '☝', does: 'gesturePoint' },
+  { gesture: 'pinch', hand: '🤏', does: 'gesturePinch' },
+  { gesture: 'open', hand: '🖐', does: 'gestureOpen' },
+  { gesture: 'peace', hand: '✌', does: 'gesturePeace' },
+  { gesture: 'frame', hand: '📐', does: 'gestureFrame' },
 ]
 
 export function GestureGuide({ live }: { live: boolean }) {
+  const lang = useStore((s) => s.lang)
   return (
     <AnimatePresence>
       {live && (
@@ -30,12 +33,12 @@ export function GestureGuide({ live }: { live: boolean }) {
           exit={{ opacity: 0, y: 8, filter: 'blur(6px)', transition: { duration: 0.5 } }}
           transition={{ type: 'spring', stiffness: 260, damping: 28 }}
         >
-          <div className="gguide-head">HAND CONTROL</div>
+          <div className="gguide-head">{translate(lang, 'handControl')}</div>
           {MOVES.map((m) => (
             <div key={m.gesture} className="gguide-row">
               <span className="gguide-icon">{m.hand}</span>
               <span className="gguide-name">{m.gesture}</span>
-              <span className="gguide-does">{m.does}</span>
+              <span className="gguide-does">{translate(lang, m.does)}</span>
             </div>
           ))}
           <div className="gguide-foot">

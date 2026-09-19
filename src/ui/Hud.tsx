@@ -1,21 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useStore, accentFor, type Phase } from '../store'
+import { t as translate, type StringKey } from '../lib/i18n'
 import { configure } from '../lib/brain'
 import { BladeSweep, Blades } from './Blades'
 import { Effects } from './Effects'
 import { Pointer } from './Pointer'
 import { GestureGuide } from './GestureGuide'
 
-const statusText: Record<Phase, string> = {
-  offline: 'OFFLINE',
-  boot: 'INITIALISING',
-  dormant: 'STANDBY — SAY “HEY JARVIS”',
-  waking: 'ONLINE',
-  listening: 'LISTENING',
-  thinking: 'PROCESSING',
-  tooling: 'ACCESSING SYSTEMS',
-  speaking: 'RESPONDING',
+const statusKey: Record<Phase, StringKey> = {
+  offline: 'statusOffline',
+  boot: 'statusBoot',
+  dormant: 'statusDormant',
+  waking: 'statusWaking',
+  listening: 'statusListening',
+  thinking: 'statusThinking',
+  tooling: 'statusTooling',
+  speaking: 'statusSpeaking',
 }
 
 function Corner({ at }: { at: 'tl' | 'tr' | 'bl' | 'br' }) {
@@ -202,6 +203,10 @@ export function Hud({
   const muted = useStore((s) => s.muted)
   const setMuted = useStore((s) => s.setMuted)
   const noInput = useStore((s) => s.noInput)
+  const lang = useStore((s) => s.lang)
+  const setLang = useStore((s) => s.setLang)
+  /** Bound to the current language so the call sites stay one short word. */
+  const tr = (key: StringKey) => translate(lang, key)
   const queue = useStore((s) => s.queue)
   const bridge = useStore((s) => s.bridge)
   const settingsOpen = useStore((s) => s.settingsOpen)
@@ -223,7 +228,7 @@ export function Hud({
       id,
       kind: 'camera',
       source,
-      title: source === 'screen' ? 'Screen share' : 'Camera',
+      title: source === 'screen' ? translate(useStore.getState().lang, 'screenShare') : translate(useStore.getState().lang, 'camera'),
       size: 'tall',
       hold: 'sticky',
     })
@@ -277,7 +282,7 @@ export function Hud({
                 the right thing to show during boot — as a general fallback a
                 note that never got cleared (a stuck 'voice 97%') sits over
                 LISTENING and PROCESSING for the rest of the session. */}
-            {phase === 'boot' && bootNote ? bootNote : statusText[phase]}
+            {phase === 'boot' && bootNote ? bootNote : tr(statusKey[phase])}
           </span>
         </div>
         {/* Visible only while he is working. Same call as Escape. */}
@@ -341,12 +346,12 @@ export function Hud({
           {settingsOpen && phase !== 'offline' && (
             <div className="settings">
               <div className="settings-row">
-                <label>Model</label>
+                <label>{tr('settingsModel')}</label>
                 <select
                   value={bridge.model}
                   onChange={(e) => configure({ model: e.target.value })}
                 >
-                  {(bridge.models.length ? bridge.models : [{ id: bridge.model, label: bridge.model || 'Default' }]).map((m) => (
+                  {(bridge.models.length ? bridge.models : [{ id: bridge.model, label: bridge.model || tr('settingsDefault') }]).map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.label}
                     </option>
@@ -354,39 +359,39 @@ export function Hud({
                 </select>
               </div>
               <div className="settings-row">
-                <label>Effort</label>
+                <label>{tr('settingsEffort')}</label>
                 <select
                   value={bridge.effort}
                   onChange={(e) => configure({ effort: e.target.value })}
                 >
                   {(bridge.efforts.length ? bridge.efforts : [bridge.effort]).map((e) => (
                     <option key={e} value={e}>
-                      {e || 'Default (from settings)'}
+                      {e || tr('settingsDefaultFromSettings')}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="settings-row">
-                <label>Noise guard</label>
+                <label>{tr('settingsNoise')}</label>
                 <select
                   value={echoGuard}
                   onChange={(e) => setEchoGuard(e.target.value as 'standard' | 'strict')}
                 >
-                  <option value="standard">Standard</option>
-                  <option value="strict">Strict (nothing heard while he speaks)</option>
+                  <option value="standard">{tr('noiseStandardOption')}</option>
+                  <option value="strict">{tr('noiseStrictOption')}</option>
                 </select>
               </div>
               {bridge.sessions.length > 0 && (
                 <div className="settings-row">
-                  <label>Conversation</label>
+                  <label>{tr('settingsConversation')}</label>
                   <select
                     value=""
                     onChange={(e) => {
                       if (e.target.value) configure({ resume: e.target.value })
                     }}
-                    title="Go back to an earlier conversation"
+                    title={tr('resumeHint')}
                   >
-                    <option value="">Current</option>
+                    <option value="">{tr('settingsCurrent')}</option>
                     {bridge.sessions.map((c) => (
                       <option key={c.id} value={c.id}>
                         {sessionLabel(c)}
@@ -399,12 +404,12 @@ export function Hud({
                 <button
                   className="rail-btn"
                   onClick={() => configure({ fresh: true })}
-                  title="Forget this conversation and start over"
+                  title={tr('newConversationHint')}
                 >
-                  NEW CONVERSATION
+                  {tr('newConversation')}
                 </button>
                 <span className="settings-note">
-                  {bridge.resumed ? 'resumed from last time' : 'fresh session'}
+                  {bridge.resumed ? tr('resumedNote') : tr('freshNote')}
                 </span>
               </div>
             </div>
@@ -414,12 +419,32 @@ export function Hud({
 
       {/* Right rail: live telemetry, mostly for flavour */}
       <aside className="rail rail-right">
-        <div className="rail-title">SIGNAL</div>
+        <div className="rail-title">{tr('signal')}</div>
         <div className="meter">
           <div className="meter-fill" style={{ height: `${level * 100}%` }} />
         </div>
         <div className="rail-item mono">
-          {muted ? 'MUTED' : noInput ? 'NO INPUT' : `${(level * 100).toFixed(0).padStart(3, '0')}%`}
+          {muted ? tr('muted') : noInput ? tr('noInput') : `${(level * 100).toFixed(0).padStart(3, '0')}%`}
+        </div>
+        {/*
+          Language, as two halves of one control rather than a dropdown or a
+          toggle. A dropdown hides the state you are not in, and a toggle makes
+          you work out which way is on; a segmented pair shows both options and
+          which one is live, and is one click either way — which is the whole
+          point of putting it out here instead of in the settings panel.
+        */}
+        <div className="seg" role="group" aria-label={tr('settingsLanguage')}>
+          {(['pt', 'en'] as const).map((code) => (
+            <button
+              key={code}
+              type="button"
+              className={`seg-btn ${lang === code ? 'is-on' : ''}`}
+              onClick={() => setLang(code)}
+              aria-pressed={lang === code}
+            >
+              {code.toUpperCase()}
+            </button>
+          ))}
         </div>
         {phase !== 'offline' && (
           <button
@@ -429,7 +454,7 @@ export function Hud({
             title="Mute microphone (M)"
           >
             <span className="mute-icon" />
-            {muted ? 'MIC OFF' : 'MIC ON'}
+            {muted ? tr('micOff') : tr('micOn')}
           </button>
         )}
         {phase !== 'offline' && (
@@ -444,7 +469,7 @@ export function Hud({
             }
           >
             <span className="mute-icon" />
-            {echoGuard === 'strict' ? 'NOISE STRICT' : 'NOISE STD'}
+            {echoGuard === 'strict' ? tr('noiseStrict') : tr('noiseStandard')}
           </button>
         )}
       </aside>
@@ -488,7 +513,7 @@ export function Hud({
                 exit={{ opacity: 0 }}
                 transition={{ type: 'spring', stiffness: 320, damping: 32 }}
               >
-                <span className="log-who">{t.role === 'user' ? 'YOU' : 'JARVIS'}</span>
+                <span className="log-who">{t.role === 'user' ? tr('speakerYou') : tr('speakerJarvis')}</span>
                 {/* Only his half decodes. What the user said was never
                     transmitted from anywhere — dressing it up as machine
                     output would be a lie about where the words came from. */}

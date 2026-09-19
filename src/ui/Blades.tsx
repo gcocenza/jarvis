@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { t as translate } from '../lib/i18n'
 import { useStore, type Blade } from '../store'
 import { BRIDGE_HTTP_URL } from '../config'
 import { sanitisePanelHtml } from './sanitise'
@@ -148,8 +149,8 @@ const CameraView = memo(function CameraView({ blade }: { blade: Blade }) {
         failed_(
           err?.name === 'NotAllowedError'
             ? screen
-              ? 'Screen sharing was cancelled.'
-              : 'Camera access is not permitted.'
+              ? translate(useStore.getState().lang, 'errScreenCancelled')
+              : translate(useStore.getState().lang, 'errCameraNotAllowed')
             : `The ${screen ? 'screen' : 'camera'} could not be opened: ${err?.message ?? err}`,
         ),
       )

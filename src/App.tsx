@@ -15,6 +15,7 @@ import * as camera from './lib/camera'
 import * as kokoro from './lib/kokoro'
 import { TTS_ENGINE } from './config'
 import { forTool, attention } from './lib/fillers'
+import { t as translate, type StringKey } from './lib/i18n'
 import {
   ask,
   warm,
@@ -101,6 +102,9 @@ const BUSY = new Set(['thinking', 'tooling', 'speaking'])
 
 export default function App() {
   const store = useStore
+  /** Notices are written for whoever is reading the screen, so they follow the
+   *  interface language rather than the language of the code. */
+  const say = (key: StringKey) => translate(store.getState().lang, key)
   const phase = useStore((s) => s.phase)
   const history = useRef<Msg[]>([])
   const speaker = useRef<ReturnType<typeof createSpeaker> | null>(null)
@@ -221,7 +225,7 @@ export default function App() {
           // chain of five tools shouldn't produce five apologies.
           if (!filled && !started) {
             filled = true
-            spk.say(forTool(name))
+            spk.say(forTool(store.getState().lang, name))
           }
         },
       }, frame)
@@ -247,7 +251,7 @@ export default function App() {
       sfx.play('error')
       store
         .getState()
-        .setError(err instanceof Error ? err.message : 'Something went wrong.')
+        .setError(err instanceof Error ? err.message : say('errGeneric'))
     } finally {
       if (!stale()) {
         speaker.current = null
@@ -369,7 +373,7 @@ export default function App() {
     // straight over the greeting instead of waiting it out.
     const greeting = createSpeaker()
     speaker.current = greeting
-    greeting.say(attention())
+    greeting.say(attention(store.getState().lang))
     void greeting.end()
 
     listen(AWAIT_SPEECH_MS)
@@ -466,7 +470,7 @@ export default function App() {
     const st = store.getState()
     st.setNoInput(dead)
     if (dead) {
-      st.setError('No audio from the microphone — check it is not in use elsewhere, or reload.')
+      st.setError(say('errNoAudio'))
     }
   }
 
@@ -496,7 +500,7 @@ export default function App() {
         .setError(
           err instanceof Error
             ? `Power-up failed: ${err.message}`
-            : 'Power-up failed. Click to try again.',
+            : say('errPowerUp'),
         )
     }
   }
@@ -560,9 +564,7 @@ export default function App() {
         store.getState().setLooking(null)
         return {
           error:
-            'There is no recent footage — the camera has to be open on screen ' +
-            'for me to remember what just happened. Ask me to open the camera, ' +
-            'and I can watch from then on.',
+            say('errNoFootage'),
         }
       }
 
@@ -575,14 +577,14 @@ export default function App() {
         if (req.mode === 'look') return camera.grabFrame()
         if (req.when === 'past') {
           const grid = camera.recentGrid(req.seconds, 9)
-          return grid ?? { error: 'There is not enough recent footage to review.' }
+          return grid ?? { error: say('errShortFootage') }
         }
         return await camera.watchAhead(req.seconds, 9)
       } catch (err) {
         return {
           error:
             (err as DOMException)?.name === 'NotAllowedError'
-              ? 'The camera is not permitted, so I cannot see anything.'
+              ? say('errCameraNotPermitted')
               : `The camera could not be read: ${(err as Error)?.message ?? err}`,
         }
       } finally {
@@ -624,11 +626,11 @@ export default function App() {
     // on screen still shows it. Better to say so than to let him quietly forget.
     watchConnection((state) => {
       if (state === 'lost') {
-        store.getState().setError('Bridge connection lost — reconnecting.')
+        store.getState().setError(say('noticeBridgeLost'))
       } else if (state === 'reconnected') {
         store
           .getState()
-          .setError('Bridge reconnected. The previous conversation was not kept.')
+          .setError(say('noticeBridgeBack'))
       }
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
@@ -693,6 +695,7 @@ export default function App() {
       onUtterance,
       onError: onVoiceError,
       onInputDead,
+      lang: () => store.getState().lang,
     })
     // The stream only exists once the loop has opened it, so a mute pressed
     // during start-up has to be applied here as well.
@@ -828,7 +831,7 @@ export default function App() {
                 .getState()
                 .setError(
                   err?.name === 'NotAllowedError'
-                    ? 'Camera access denied — gesture control is unavailable.'
+                    ? say('errCameraDenied')
                     : `Gesture control failed to start: ${err?.message ?? err}`,
                 )
             })
@@ -845,7 +848,7 @@ export default function App() {
         silence()
         const t = createSpeaker()
         speaker.current = t
-        t.say('Audio test. If you can hear this, speech output is working, sir.')
+        t.say(say('audioTest'))
         void t.end().then(() => {
           const d = (window as unknown as Record<string, Record<string, unknown>>).__tts
           console.info('[jarvis] audio test →', d)

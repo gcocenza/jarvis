@@ -1,3 +1,5 @@
+import type { Lang } from './i18n'
+
 /**
  * Filler speech.
  *
@@ -15,51 +17,93 @@
  *   - No filler words, no enthusiasm, no apology, no exclamation marks.
  *   - "Sir" fronted means urgency; final means routine. These are all routine,
  *     so it goes at the end, and only sometimes.
+ *
+ * The Portuguese is a rewrite, not a translation. "Sir" becomes "senhor" and
+ * sits where Portuguese puts it; the participial working lines become the
+ * gerund, which is the natural Brazilian register for the same idea. A literal
+ * pass would produce phrases nobody says out loud, and these are all said out
+ * loud. Each pool keeps the two languages index-aligned so a single pick reads
+ * the same line in either.
  */
 
+/** Index-aligned pools: entry n means the same thing in both languages. */
+type Pool = Record<Lang, string[]>
+
 /** Said as soon as the first tool fires, before any answer exists. */
-const WORKING = [
-  'Working on it, sir.',
-  'Compiling.',
-  'Retrieving.',
-  'Accessing the archive.',
-  'Cross-referencing.',
-  'Running the query now.',
-  'Searching.',
-  'Under way.',
-]
+const WORKING: Pool = {
+  en: [
+    'Working on it, sir.',
+    'Compiling.',
+    'Retrieving.',
+    'Accessing the archive.',
+    'Cross-referencing.',
+    'Running the query now.',
+    'Searching.',
+    'Under way.',
+  ],
+  pt: [
+    'Cuidando disso, senhor.',
+    'Compilando.',
+    'Recuperando.',
+    'Acessando o arquivo.',
+    'Cruzando as referências.',
+    'Rodando a consulta agora.',
+    'Buscando.',
+    'Em andamento.',
+  ],
+}
 
 /** Acknowledging an order where no tool is involved. */
-const ACKNOWLEDGE = [
-  'As you wish, sir.',
-  'Very good, sir.',
-  'Certainly.',
-  'Understood.',
-  'Consider it done.',
-  'Directly, sir.',
-]
+const ACKNOWLEDGE: Pool = {
+  en: [
+    'As you wish, sir.',
+    'Very good, sir.',
+    'Certainly.',
+    'Understood.',
+    'Consider it done.',
+    'Directly, sir.',
+  ],
+  pt: [
+    'Como quiser, senhor.',
+    'Muito bem, senhor.',
+    'Pois não.',
+    'Entendido.',
+    'Considere feito.',
+    'Imediatamente, senhor.',
+  ],
+}
 
 /** Answering to his name, before the user has said what they want. */
-const ATTENTION = [
-  'Yes, sir?',
-  'Sir?',
-  'At your service, sir.',
-  'Standing by.',
-  'Awake, sir.',
-]
+const ATTENTION: Pool = {
+  en: [
+    'Yes, sir?',
+    'Sir?',
+    'At your service, sir.',
+    'Standing by.',
+    'Awake, sir.',
+  ],
+  pt: [
+    'Sim, senhor?',
+    'Senhor?',
+    'Às ordens, senhor.',
+    'Aguardando.',
+    'Acordado, senhor.',
+  ],
+}
 
 /**
  * Avoids repeating the same phrase twice running, which is what makes canned
  * lines sound canned. Keeps one slot of history per pool.
  */
-function makePicker(pool: string[]) {
+function makePicker(pool: Pool) {
   let last = -1
-  return () => {
-    if (pool.length < 2) return pool[0] ?? ''
+  return (lang: Lang) => {
+    const lines = pool[lang]
+    if (lines.length < 2) return lines[0] ?? ''
     let i = last
-    while (i === last) i = Math.floor(Math.random() * pool.length)
+    while (i === last) i = Math.floor(Math.random() * lines.length)
     last = i
-    return pool[i]
+    return lines[i]
   }
 }
 
@@ -88,10 +132,13 @@ type Rule = {
   server?: RegExp
   /** Matched against the tool segment, or the whole name for a built-in. */
   tool?: RegExp
-  lines: string[]
+  lines: Pool
 }
 
-const FOOTAGE = ['Assembling the footage.', 'Rendering the sequence.']
+const FOOTAGE: Pool = {
+  en: ['Assembling the footage.', 'Rendering the sequence.'],
+  pt: ['Montando as imagens.', 'Renderizando a sequência.'],
+}
 
 const BY_TOOL: Rule[] = [
   // Video sits above image because higgsfield and palmier both do either, so
@@ -101,50 +148,62 @@ const BY_TOOL: Rule[] = [
   {
     server: /higgsfield|openrouter-image|dalle|flux|midjourney/,
     tool: /image|photo|thumbnail|render|upscale|seedream/,
-    lines: ['Rendering.', 'Composing it now.'],
+    lines: { en: ['Rendering.', 'Composing it now.'], pt: ['Renderizando.', 'Compondo agora.'] },
   },
   // The editors, once the two rules that read the verb have had their turn.
   { server: /palmier|heygen|runway|descript/, lines: FOOTAGE },
   {
     server: /playwright|puppeteer|browserbase|chrome/,
     tool: /\bbrowser\b|navigate/,
-    lines: ['Opening the browser.', 'Navigating.'],
+    lines: { en: ['Opening the browser.', 'Navigating.'], pt: ['Abrindo o navegador.', 'Navegando.'] },
   },
   {
     server: /android|\badb\b|simulator/,
     tool: /\bdevice\b|\bapk\b|\bphone\b/,
-    lines: ['Reaching the device.', 'Connecting to your phone.'],
+    lines: {
+      en: ['Reaching the device.', 'Connecting to your phone.'],
+      pt: ['Alcançando o aparelho.', 'Conectando ao seu telefone.'],
+    },
   },
   {
     server: /gmail|\bmail\b/,
     tool: /gmail|\bmail\b|email|inbox/,
-    lines: ['Checking your mail.', 'Reading the inbox.'],
+    lines: {
+      en: ['Checking your mail.', 'Reading the inbox.'],
+      pt: ['Verificando sua correspondência.', 'Lendo a caixa de entrada.'],
+    },
   },
   // Calendar keys off "calendar" alone. "event" used to live here, which is how
   // a Mixpanel event query came out as "Checking your calendar."
   {
     tool: /calendar|\bdiary\b|\bmeeting\b/,
-    lines: ['Checking your calendar.', 'Consulting the diary.'],
+    lines: {
+      en: ['Checking your calendar.', 'Consulting the diary.'],
+      pt: ['Verificando sua agenda.', 'Consultando o calendário.'],
+    },
   },
   {
     server: /elevenlabs|openai-tts/,
     tool: /speech|\bvoice\b|\btts\b|text_to_sound/,
-    lines: ['Synthesising.', 'Working on it, sir.'],
+    lines: { en: ['Synthesising.', 'Working on it, sir.'], pt: ['Sintetizando.', 'Cuidando disso, senhor.'] },
   },
   {
     server: /spotify|sonos/,
     tool: /\bplay\b|\bmusic\b|playlist|\btrack\b/,
-    lines: ['Queuing it up.', 'Putting it on.'],
+    lines: { en: ['Queuing it up.', 'Putting it on.'], pt: ['Colocando na fila.', 'Botando pra tocar.'] },
   },
   {
     server: /^home|homeassistant|\bhue\b|\bhass\b/,
     tool: /\blights?\b|thermostat|\bdimmer\b/,
-    lines: ['Adjusting it now.', 'Seeing to it, sir.'],
+    lines: { en: ['Adjusting it now.', 'Seeing to it, sir.'], pt: ['Ajustando agora.', 'Providenciando, senhor.'] },
   },
   {
     server: /github|linear|jira|sentry/,
     tool: /\brepo\b|repository|\bissues?\b|pull_request|\bcommit\b/,
-    lines: ['Checking the repository.', 'Consulting the tracker.'],
+    lines: {
+      en: ['Checking the repository.', 'Consulting the tracker.'],
+      pt: ['Verificando o repositório.', 'Consultando o rastreador.'],
+    },
   },
   // Also where the anonymously named analytics servers land — theirs are bare
   // UUIDs, so only the tool half says anything: Get-Report, Get-Events,
@@ -153,12 +212,12 @@ const BY_TOOL: Rule[] = [
   {
     server: /mixpanel|clarity|posthog|amplitude/,
     tool: /analytic|\bmetrics?\b|\breports?\b|\bevents?\b|cohort|funnel|dashboard|\bquery\b/,
-    lines: ['Running the query.', 'Pulling the figures.'],
+    lines: { en: ['Running the query.', 'Pulling the figures.'], pt: ['Rodando a consulta.', 'Puxando os números.'] },
   },
   {
     server: /\bexa\b|serper|serpapi|perplexity|tavily|brave/,
     tool: /search|\bweb\b|\bfetch\b|crawl|research/,
-    lines: ['Searching.', 'Consulting the record.'],
+    lines: { en: ['Searching.', 'Consulting the record.'], pt: ['Buscando.', 'Consultando o registro.'] },
   },
 ]
 
@@ -187,15 +246,15 @@ function split(toolName: string): { server: string; tool: string } {
 }
 
 /** A phrase suited to the tool that just fired. */
-export function forTool(toolName: string): string {
+export function forTool(lang: Lang, toolName: string): string {
   const { server, tool } = split(toolName)
   for (const r of pickers) {
     const hit =
       (r.server !== undefined && server !== '' && r.server.test(server)) ||
       (r.tool !== undefined && r.tool.test(tool))
-    if (hit) return r.pick()
+    if (hit) return r.pick(lang)
   }
   // Read, Bash, Grep and anything unrecognised: better a neutral line than a
   // confident wrong one.
-  return working()
+  return working(lang)
 }
