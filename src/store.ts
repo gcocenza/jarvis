@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+import type { BridgeSession } from './lib/bridge'
+
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
   | 'boot'      // startup sequence
@@ -251,6 +253,10 @@ type State = {
    *  for permission on unmute would be worse); its tracks are disabled and the
    *  voice loop is held deaf. */
   muted: boolean
+  /** The microphone is open and unmuted but delivering nothing. Its own state
+   *  rather than an error banner: it persists while it is true, and the banner
+   *  would clear itself after seven seconds and leave the interface lying. */
+  noInput: boolean
   /** Echo and noise handling for the microphone. Persisted across reloads. */
   echoGuard: EchoGuard
   /** Set when the user chose "Skip boot up": the boot overlay never shows and
@@ -260,7 +266,15 @@ type State = {
    *  once the current answer finishes; nothing said is thrown away. */
   queue: string[]
   /** What the bridge is running: model, effort, the roster to pick from. */
-  bridge: { model: string; effort: string; models: { id: string; label: string }[]; efforts: string[]; resumed: boolean }
+  bridge: {
+    model: string
+    effort: string
+    models: { id: string; label: string }[]
+    efforts: string[]
+    resumed: boolean
+    /** Past conversations the bridge can be pointed back at, newest first. */
+    sessions: BridgeSession[]
+  }
   settingsOpen: boolean
   /** Cards currently on the display, newest last. */
   panels: Panel[]
@@ -302,6 +316,7 @@ type State = {
   setCaption: (c: string) => void
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
+  setNoInput: (noInput: boolean) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
@@ -333,10 +348,11 @@ export const useStore = create<State>((set) => ({
   hiddenBlades: [],
   bootNote: '',
   muted: true,
+  noInput: false,
   echoGuard: savedEcho(),
   skipBoot: false,
   queue: [],
-  bridge: { model: '', effort: '', models: [], efforts: [], resumed: false },
+  bridge: { model: '', effort: '', models: [], efforts: [], resumed: false, sessions: [] },
   settingsOpen: false,
   ui: defaultUi(),
 
@@ -443,6 +459,7 @@ export const useStore = create<State>((set) => ({
   setCaption: (caption) => set({ caption }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
+  setNoInput: (noInput) => set({ noInput }),
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>

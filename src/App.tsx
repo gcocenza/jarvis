@@ -454,6 +454,22 @@ export default function App() {
     store.getState().setError(message)
   }
 
+  /**
+   * The microphone went quiet in the way only a broken device goes quiet.
+   *
+   * The banner is worth firing once, because the whole point is to tell someone
+   * who is currently talking to nothing. The lasting signal is the flag: the
+   * input meter reads NO INPUT for as long as it is true, so a glance answers
+   * the question instead of a notice that has already timed out.
+   */
+  const onInputDead = (dead: boolean) => {
+    const st = store.getState()
+    st.setNoInput(dead)
+    if (dead) {
+      st.setError('No audio from the microphone — check it is not in use elsewhere, or reload.')
+    }
+  }
+
   // -- power on -------------------------------------------------------------
 
   const powerOn = async (skip = false) => {
@@ -676,6 +692,7 @@ export default function App() {
       onPartial,
       onUtterance,
       onError: onVoiceError,
+      onInputDead,
     })
     // The stream only exists once the loop has opened it, so a mute pressed
     // during start-up has to be applied here as well.

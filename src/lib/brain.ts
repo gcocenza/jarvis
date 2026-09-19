@@ -56,7 +56,12 @@ export function watchBridgeInfo(fn: (info: bridge.BridgeInfo) => void): void {
 }
 
 /** Change model or effort (conversation kept), or start a fresh one. */
-export function configure(patch: { model?: string; effort?: string; fresh?: boolean }): void {
+export function configure(patch: {
+  model?: string
+  effort?: string
+  fresh?: boolean
+  resume?: string
+}): void {
   if (usingBridge) bridge.configure(patch)
 }
 

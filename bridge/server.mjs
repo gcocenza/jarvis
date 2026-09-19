@@ -22,6 +22,7 @@ import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
 import { startWhisper, whisperReady, whisperTranscribe, whisperUnavailable } from './whisper.mjs'
+import { readSessions, noteSession as writeSession } from './sessions.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -288,6 +289,17 @@ const readResume = () => {
     return null
   }
 }
+/**
+ * Where this workspace's conversation history lives. The list itself is in
+ * sessions.mjs; only the path is a property of this bridge.
+ */
+const SESSIONS_FILE = join(
+  RESUME_DIR,
+  `sessions-${createHash('sha1').update(WORKSPACE ?? homedir()).digest('hex').slice(0, 10)}.json`,
+)
+const sessions = () => readSessions(SESSIONS_FILE)
+const noteSession = (id, patch) => writeSession(SESSIONS_FILE, id, patch)
+
 const writeResume = (session_id, model, effort) => {
   try {
     mkdirSync(RESUME_DIR, { recursive: true })
@@ -663,6 +675,22 @@ function elevenKey() {
 }
 
 const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
+/**
+ * Which language the voice is speaking, ISO 639-1, or null to let the model
+ * guess from the text.
+ *
+ * Guessing is what produces the complaint that he speaks the wrong Portuguese.
+ * Two separate things decide the accent and only one of them is this: the voice
+ * carries it, so a Brazilian voice is the actual fix and JARVIS_VOICE_ID is
+ * where that goes. What this adds is text normalisation in the right language —
+ * it is the difference between "treze e quarenta" and an English reading of
+ * "13:40" — and it stops the model drifting between languages mid-answer.
+ *
+ * Only the flash and turbo v2.5 models accept it; the API rejects it on
+ * multilingual_v2, which is why it rides alongside the model choice below
+ * rather than being set unconditionally.
+ */
+const TTS_LANG = process.env.JARVIS_TTS_LANG?.trim() || null
 
 /**
  * Fish Audio voice. When FISH_AUDIO_API_KEY is set it takes over /tts, speaking
@@ -675,6 +703,74 @@ const FISH_VOICE_ID =
   process.env.JARVIS_FISH_VOICE_ID ?? '41f0953d7a6b4c078445c7e65d620eeb' // public "JARVIS" voice (British, calm)
 const FISH_MODEL = process.env.JARVIS_FISH_MODEL ?? 's2-pro'
 const FISH_STYLE = process.env.JARVIS_FISH_STYLE ?? '[calm] [composed]'
+
+/**
+ * Speech to text, as a chain rather than a single provider.
+ *
+ * This used to be "if there is an ElevenLabs key, use Scribe, otherwise use the
+ * local worker", which quietly made one key the switch for two unrelated
+ * services. A key that speaks but cannot transcribe — wrong scope, spent quota,
+ * revoked — left /health advertising `stt: true`, the local worker never
+ * started, and every utterance died on a 401 the user never saw. Listening is
+ * the one thing that must not have a single point of failure, so the providers
+ * are tried in order and the next one answers when the one before it fails.
+ *
+ * Order is deliberate: Groq is the fastest and the most accurate of the three
+ * and is multilingual; Scribe is the established path; the local worker needs
+ * no network and no key, which is precisely what you want it for when the other
+ * two are the thing that broke.
+ */
+const GROQ_KEY = process.env.GROQ_API_KEY ?? null
+const GROQ_STT_MODEL = process.env.JARVIS_GROQ_STT_MODEL ?? 'whisper-large-v3-turbo'
+/** ISO-639-1 hint. Unset means let the model detect it, which it does well. */
+const STT_LANG = process.env.JARVIS_STT_LANG ?? null
+
+/** Scribe gets no codec header, so the filename extension is the only hint. */
+function audioExt(type) {
+  if (type.includes('ogg')) return 'ogg'
+  if (type.includes('mp4') || type.includes('mpeg')) return 'mp4'
+  if (type.includes('wav')) return 'wav'
+  return 'webm'
+}
+
+async function groqTranscribe(audio, type) {
+  const form = new FormData()
+  form.append('model', GROQ_STT_MODEL)
+  form.append('file', new Blob([audio], { type }), `speech.${audioExt(type)}`)
+  if (STT_LANG) form.append('language', STT_LANG)
+  const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${GROQ_KEY}` },
+    body: form,
+  })
+  if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 200)}`)
+  return ((await r.json()).text ?? '').trim()
+}
+
+async function scribeTranscribe(audio, type) {
+  const form = new FormData()
+  form.append('model_id', 'scribe_v1')
+  form.append('file', new Blob([audio], { type }), `speech.${audioExt(type)}`)
+  if (STT_LANG) form.append('language_code', STT_LANG)
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+    method: 'POST',
+    headers: { 'xi-api-key': elevenKey() },
+    body: form,
+  })
+  if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 200)}`)
+  return ((await r.json()).text ?? '').trim()
+}
+
+/** Whichever providers are usable right now, best first. Read per request:
+ *  the local worker becomes ready seconds after boot, and a cloud key can be
+ *  edited into the MCP config without restarting the bridge. */
+function sttChain() {
+  const chain = []
+  if (GROQ_KEY) chain.push(['groq', groqTranscribe])
+  if (elevenKey()) chain.push(['elevenlabs', scribeTranscribe])
+  if (whisperReady()) chain.push(['local', whisperTranscribe])
+  return chain
+}
 
 /**
  * Where /file is permitted to read from, and how big a read may get.
@@ -895,14 +991,17 @@ const handleRequest = async (req, res) => {
 
   if (req.method === 'GET' && req.url === '/health') {
     // The browser reads this once at boot to decide which voice engine to use.
-    // Both premium paths ride the same ElevenLabs key, so both flags track it:
-    // with a key the app transcribes with Scribe and speaks with ElevenLabs;
-    // without one it falls back to the browser's own recogniser and voice, so a
-    // student with nothing configured still has a working assistant.
-    const eleven = Boolean(elevenKey())
+    // The two flags are independent on purpose: speaking and hearing run on
+    // different providers and must not be able to take each other down. `stt`
+    // is true when any transcriber is usable, so a broken cloud key reads here
+    // as what it is — still listening, via something else.
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
     return res.end(
-      JSON.stringify({ ok: true, tts: eleven || Boolean(FISH_KEY), stt: eleven || whisperReady() }),
+      JSON.stringify({
+        ok: true,
+        tts: Boolean(elevenKey()) || Boolean(FISH_KEY),
+        stt: sttChain().length > 0,
+      }),
     )
   }
 
@@ -1090,6 +1189,7 @@ const handleRequest = async (req, res) => {
             // Flash is the low-latency model — a conversation needs speed more
             // than it needs the last few percent of quality.
             model_id: 'eleven_flash_v2_5',
+            ...(TTS_LANG ? { language_code: TTS_LANG } : {}),
             voice_settings: {
               stability: 0.4,
               similarity_boost: 0.75,
@@ -1126,11 +1226,15 @@ const handleRequest = async (req, res) => {
   // speaking at all is done locally with voice-activity detection, which never
   // touches this endpoint; this is only for the words.
   if (req.method === 'POST' && req.url === '/stt') {
-    const key = elevenKey()
-    // No cloud key and no local worker: nothing can transcribe. Say so.
-    if (!key && !whisperReady()) {
+    const chain = sttChain()
+    // Nothing can transcribe at all. Say so plainly rather than timing out.
+    if (!chain.length) {
       res.writeHead(503, cors)
-      return res.end(whisperUnavailable() ? 'no speech-to-text available' : 'local speech-to-text still warming up')
+      return res.end(
+        whisperUnavailable()
+          ? 'no speech-to-text available'
+          : 'local speech-to-text still warming up',
+      )
     }
 
     const type = req.headers['content-type'] || 'audio/webm'
@@ -1159,53 +1263,27 @@ const handleRequest = async (req, res) => {
       return res.end(JSON.stringify({ text: '' }))
     }
 
-    // No cloud key: transcribe locally with the warm faster-whisper worker.
-    if (!key) {
+    // Try each provider in turn. A failure is logged every time: the whole
+    // class of bug this replaces was a transcriber failing in a way nobody
+    // could see from the outside.
+    const audio = Buffer.concat(chunks)
+    const failures = []
+    for (const [name, run] of chain) {
       try {
-        const text = await whisperTranscribe(Buffer.concat(chunks), type)
+        const text = await run(audio, type)
+        if (failures.length) {
+          console.warn(`[jarvis] stt fell back to ${name} after ${failures.join('; ')}`)
+        }
         res.writeHead(200, { ...cors, 'content-type': 'application/json' })
         return res.end(JSON.stringify({ text }))
       } catch (err) {
-        res.writeHead(502, cors)
-        return res.end(String(err?.message ?? err))
+        failures.push(`${name}: ${err?.message ?? err}`)
       }
     }
 
-    try {
-      // The filename extension is the only hint Scribe gets about the codec, so
-      // derive it from the content-type the MediaRecorder reported rather than
-      // hard-coding one.
-      const ext = type.includes('ogg')
-        ? 'ogg'
-        : type.includes('mp4') || type.includes('mpeg')
-          ? 'mp4'
-          : type.includes('wav')
-            ? 'wav'
-            : 'webm'
-      const form = new FormData()
-      form.append('model_id', 'scribe_v1')
-      form.append(
-        'file',
-        new Blob([Buffer.concat(chunks)], { type }),
-        `speech.${ext}`,
-      )
-
-      const upstream = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-        method: 'POST',
-        headers: { 'xi-api-key': key },
-        body: form,
-      })
-      if (!upstream.ok) {
-        res.writeHead(upstream.status, cors)
-        return res.end(await upstream.text())
-      }
-      const data = await upstream.json()
-      res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ text: (data.text ?? '').trim() }))
-    } catch (err) {
-      res.writeHead(502, cors)
-      return res.end(String(err?.message ?? err))
-    }
+    console.error(`[jarvis] stt failed on every provider — ${failures.join('; ')}`)
+    res.writeHead(502, cors)
+    return res.end(failures.join('; '))
   }
 
   res.writeHead(404, cors)
@@ -1249,13 +1327,21 @@ server.listen(PORT)
 
 console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
 
-// Warm up local speech-to-text unless an ElevenLabs key already covers it. The
-// browser records whole utterances and posts them to /stt; a warm faster-whisper
-// worker answers when no cloud STT is configured. Never fatal — degrades to the
-// browser recogniser if Python or the package is missing.
-if (!elevenKey()) startWhisper()
+// Warm up local speech-to-text unconditionally. It used to start only when no
+// cloud key was present, which meant the fallback did not exist in exactly the
+// situation that needs one: a key that is configured but does not work. The
+// model load is a few hundred megabytes of RAM and costs nothing when unused.
+// Never fatal — if Python or faster-whisper is missing it simply never reports
+// ready and drops out of the chain.
+startWhisper()
 console.log(
-  `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
+  `[jarvis] speech out ${elevenKey() ? `via ElevenLabs · voice ${VOICE_ID}` : FISH_KEY ? 'via Fish Audio' : 'using browser voice'}` +
+    (TTS_LANG ? ` · language ${TTS_LANG}` : ''),
+)
+console.log(
+  `[jarvis] speech in: ${[GROQ_KEY && `groq (${GROQ_STT_MODEL})`, elevenKey() && 'elevenlabs', 'local whisper']
+    .filter(Boolean)
+    .join(' → ')}`,
 )
 console.log(
   `[jarvis] model ${MODEL ?? 'from settings'} · effort ${EFFORT ?? 'from settings'}`,
@@ -1322,6 +1408,7 @@ wss.on('connection', (socket) => {
     effort: currentEffort(),
     models: MODELS,
     efforts: EFFORTS,
+    sessions: sessions(),
     ...extra,
   })
 
@@ -1490,6 +1577,17 @@ wss.on('connection', (socket) => {
   /** What this session was resumed from, if anything, so a failed resume can
    *  fall back to a fresh start once instead of closing the socket. */
   let resumedFrom = null
+  /**
+   * The question that opened this connection, held until there is an id to file
+   * it under.
+   *
+   * The SDK announces its session id on the first turn, which is *after* the
+   * question that caused that turn has already gone by — so naming the
+   * conversation at the moment it is asked writes the title against a null id
+   * and drops it. Every new conversation would then sit in the list as a bare
+   * uuid, which is the one thing the list exists to avoid.
+   */
+  let openingQuestion = null
 
   const startSession = (resumeId) => query({
     prompt: userMessages(),
@@ -1695,6 +1793,7 @@ wss.on('connection', (socket) => {
               if (typeof msg.session_id === 'string') {
                 sessionId = msg.session_id
                 writeResume(sessionId, modelOverride, effortOverride)
+                noteSession(sessionId, openingQuestion ? { title: openingQuestion } : {})
               }
               send(readyMsg(usable, { resumed: Boolean(resumedFrom) }))
               console.log(
@@ -1777,6 +1876,11 @@ wss.on('connection', (socket) => {
           : null
       const text = image ? { text: msg.text, image } : msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
+      // Name the conversation after its opening question, and bump it to the
+      // top of the list while it is the one being had. When the id is not known
+      // yet this only remembers the question; the init below files it.
+      openingQuestion ??= msg.text.trim().slice(0, 80)
+      noteSession(sessionId, { title: openingQuestion })
       void settling.then(() => {
         answering = id
         if (deliver) {
@@ -1801,19 +1905,34 @@ wss.on('connection', (socket) => {
         const e = String(msg.effort ?? '')
         effortOverride = EFFORTS.includes(e) ? e || null : effortOverride
       }
-      // Persist across the reconnect. A fresh conversation drops the session
-      // id but keeps the model and effort, saved with a null id so reconnect
-      // starts clean on the chosen model. A model or effort change keeps the
-      // id too, so the conversation is resumed.
+      /**
+       * Which conversation the reconnect lands in.
+       *
+       * All three cases go through the same door — persist the choice, then
+       * drop the socket and let the browser reconnect into it — because a
+       * reconnect is the only path that reliably builds a clean session. The
+       * difference is purely what id is on disk when it does: an explicit one
+       * to go back to an earlier conversation, none to start over, and the
+       * current one when this is only a model or effort change.
+       */
+      const picked =
+        typeof msg.resume === 'string' && msg.resume
+          ? sessions().find((x) => x.id === msg.resume)
+          : null
       if (msg.fresh) {
         sessionId = null
         writeResume(null, modelOverride, effortOverride)
+      } else if (picked) {
+        sessionId = picked.id
+        writeResume(picked.id, modelOverride, effortOverride)
       } else {
         writeResume(sessionId, modelOverride, effortOverride)
       }
       console.log(
         `[jarvis] config: model ${currentModel() || 'from settings'} · effort ${currentEffort() || 'from settings'}` +
-          (msg.fresh ? ' · fresh conversation' : '') + ' · reconnecting',
+          (msg.fresh ? ' · fresh conversation' : '') +
+          (picked ? ` · resuming ${picked.id.slice(0, 8)}` : '') +
+          ' · reconnecting',
       )
       applyConfig()
     }
