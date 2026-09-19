@@ -133,7 +133,7 @@ function level(cue: Cue): number {
   return ducked && cue !== 'boot-music' ? want[cue] * DUCK : want[cue]
 }
 
-function fadeTo(cue: Cue, to: number, ms: number) {
+function fadeTo(cue: Cue, to: number, ms: number, restart = false) {
   const t = track(cue)
   if (!t) return
   if (t.fade !== null) cancelAnimationFrame(t.fade)
@@ -148,16 +148,32 @@ function fadeTo(cue: Cue, to: number, ms: number) {
       if (to === 0) t.el.pause()
     }
   }
-  // `finished` is what stops an ended one-shot being restarted by a later
-  // request for its level — see the note where it is declared.
-  if (to > 0 && t.el.paused && !finished.has(cue)) void t.el.play().catch(() => {})
+  /**
+   * Never resurrect a cue that has already played out.
+   *
+   * `finished` was the only guard here, and it records the 'ended' event having
+   * been *handled* rather than the track having ended. Any path that gets an
+   * element to its last frame without that event being observed leaves the set
+   * empty and `want` un-zeroed, and then the opening music is raised from the
+   * dead on the next unduck — which is once per sentence, because ducking asks
+   * for ambient's level every time JARVIS stops speaking. Observed in the wild
+   * as `play()` on ambient.mp3 at currentTime 10.3 of a 10.29-second file.
+   *
+   * `el.ended` is the element's own answer to the same question and needs no
+   * event to have been seen. `restart` is how the two deliberate one-shot
+   * starters say they mean it: both seek to zero first, and a seek is
+   * asynchronous, so `ended` can still be true when this runs a line later —
+   * asking the flag there would block exactly the replay that was intended.
+   */
+  const spent = !restart && (t.el.ended || finished.has(cue))
+  if (to > 0 && t.el.paused && !spent) void t.el.play().catch(() => {})
   t.fade = requestAnimationFrame(step)
 }
 
 /** Set a cue's resting level and ramp to wherever that lands it. */
-function set(cue: Cue, to: number, ms: number) {
+function set(cue: Cue, to: number, ms: number, restart = false) {
   want[cue] = to
-  fadeTo(cue, level(cue), ms)
+  fadeTo(cue, level(cue), ms, restart)
 }
 
 /** The boot cue's own dissolve, held so stopAll can cancel it. */
@@ -170,7 +186,7 @@ export function playBoot() {
   t.el.currentTime = 0
   // In fast so the start-up sound lands with the first beat of the boot
   // sequence rather than easing in under it.
-  set('boot-music', LEVEL['boot-music'], 120)
+  set('boot-music', LEVEL['boot-music'], 120, true)
   /**
    * Dissolve near the end of whatever clip is actually there.
    *
@@ -215,7 +231,7 @@ export function startAmbient() {
   // allowed to play it again.
   finished.delete('ambient')
   t.el.currentTime = 0
-  set('ambient', LEVEL.ambient, 900)
+  set('ambient', LEVEL.ambient, 900, true)
 }
 
 export function stopAll() {
