@@ -1,5 +1,54 @@
 # JARVIS — Known Issues (running record)
 
+## STATUS 2026-09-19 (fork session)
+
+Repo moved to our fork: `origin` = gcocenza/jarvis, `upstream` =
+charlesdove977/jarvis with push disabled. Check upstream with
+`git fetch upstream && git log --oneline main..upstream/main`.
+
+FIXED + pushed:
+- **STT dead behind a working TTS key** — speaking and hearing rode the same
+  ElevenLabs credential, and a key without the `speech_to_text` scope answered
+  401 to every utterance while `/health` still said it was listening. `/stt` is
+  now a chain (Groq → Scribe → local faster-whisper) that falls through on
+  failure, `/health` reports the two independently, and the local worker always
+  warms so the fallback exists when it is needed (`6e9f831`).
+- **Mic dies silently after macOS sleep/wake** — Chrome's capture wedges, the
+  track stays `live`, every sample is a hard zero and nothing throws. The VAD
+  now says so: `NO INPUT` on the signal rail, a line in the diagnostics panel.
+  Deliberately silent while muted, since muting produces identical silence
+  (`6e9f831`).
+- **Session picker** — the bridge keeps its own list of conversations in
+  `~/.jarvis`, named after the question that opened each, and settings can point
+  it back at any of them (`6e9f831`).
+- **PT/EN switch** — one segmented control on the right rail moves on-screen
+  text, the spoken filler lines, the wake word, the transcription language and
+  the speaking voice (`1951c35`).
+- **Opening music restarted after every reply** — `fadeTo` restarts a cue it
+  finds paused, and an ended element is a paused one; the `finished` guard
+  tracked the 'ended' *event* rather than the element's own state
+  (`2e9757b`).
+
+HELD (Gabriel's call, raised 2026-09-19, deferred):
+- **`work.mp3` is dead weight.** `music.working(true)` is never called — only
+  `working(false)`, in four places (`src/App.tsx:143,208,261,330`). So the
+  2.2 MB, 55-second *Mechanolith* bed at `public/audio/work.mp3` ships and never
+  plays. Either wire it to rise during a tool call or delete the file. Decision
+  deferred 2026-09-19: "vamos deixar por enquanto". Pre-existing, not from this
+  session's work.
+- **Local Whisper fallback is English-only.** The worker takes a language per
+  clip now, but the default `JARVIS_WHISPER_MODEL=base.en` ignores it. With the
+  UI in PT, if Groq is unreachable the fallback returns mangled English.
+  `JARVIS_WHISPER_MODEL=small` fixes it (~470 MB on first boot). Not applied —
+  awaiting Gabriel.
+
+Machine setup (not in the repo, lives in `~/.zshrc`): `JARVIS_VOICE_ID_PT`
+(Jarvis-BR) and `JARVIS_VOICE_ID_EN` (George), plus the ElevenLabs and Groq
+keys. Note `.zshrc` only loads for *interactive* shells — launching the bridge
+from a plain script misses them.
+
+---
+
 ## STATUS 2026-09-18 (this session)
 
 FIXED + pushed:
