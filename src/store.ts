@@ -64,11 +64,33 @@ export type Blade = {
 export type EchoGuard = 'standard' | 'strict'
 
 const LANG_KEY = 'jarvis.lang'
-/** Remembered across reloads: switching language every time you open the page
- *  would make the setting useless to the person who only ever wants one. */
+/**
+ * Remembered across reloads, and on the very first load taken from the browser.
+ *
+ * The stored choice wins — switching language every time you open the page
+ * would make the setting useless to the person who only ever wants one. What
+ * matters is the case where there is nothing stored yet, which used to fall
+ * back to English: a Portuguese speaker opening this for the first time got an
+ * English voice and, worse, transcription pinned to English, so their own
+ * Portuguese came back as nonsense words. An unconfigured default should be a
+ * guess at the user, and the browser already knows more about them than we do.
+ */
 const savedLang = (): Lang => {
   try {
-    return localStorage.getItem(LANG_KEY) === 'pt' ? 'pt' : 'en'
+    const stored = localStorage.getItem(LANG_KEY)
+    if (stored === 'pt' || stored === 'en') return stored
+  } catch {
+    /* private mode: fall through to the browser's own answer */
+  }
+  return fromBrowser()
+}
+
+/** 'pt' for pt, pt-BR, pt-PT; English for everything else, since English is
+ *  the only other language the table has. */
+const fromBrowser = (): Lang => {
+  try {
+    const tags = [navigator.language, ...(navigator.languages ?? [])]
+    return tags.some((tag) => /^pt\b/i.test(tag ?? '')) ? 'pt' : 'en'
   } catch {
     return 'en'
   }

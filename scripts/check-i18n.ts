@@ -67,4 +67,26 @@ for (const line of ptLines) {
 assert.equal(iso('pt'), 'pt')
 assert.equal(iso('en'), 'en')
 
+/**
+ * The first-load default.
+ *
+ * This shipped as a hard 'en', so a Portuguese speaker's first visit came up
+ * with an English voice and transcription pinned to English — their own speech
+ * came back as nonsense words. The rule is: a stored choice wins, and with
+ * nothing stored the browser decides.
+ */
+const pick = (stored: string | null, tags: string[]): string => {
+  if (stored === 'pt' || stored === 'en') return stored
+  return tags.some((tag) => /^pt\b/i.test(tag ?? '')) ? 'pt' : 'en'
+}
+
+assert.equal(pick(null, ['pt-BR', 'pt', 'en-US']), 'pt', 'a pt-BR browser starts in Portuguese')
+assert.equal(pick(null, ['pt']), 'pt')
+assert.equal(pick(null, ['pt-PT']), 'pt')
+assert.equal(pick(null, ['en-US']), 'en')
+assert.equal(pick(null, []), 'en', 'no answer from the browser falls back to English')
+assert.equal(pick('en', ['pt-BR']), 'en', 'a stored choice beats the browser')
+assert.equal(pick('pt', ['en-US']), 'pt')
+assert.equal(pick('garbage', ['pt-BR']), 'pt', 'a corrupt stored value is ignored')
+
 console.log(`OK — ${new Set(keys).size} keys translated, fillers answer in both languages`)
