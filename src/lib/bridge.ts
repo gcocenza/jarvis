@@ -42,6 +42,16 @@ type Frame = {
   models?: { id: string; label: string }[]
   efforts?: string[]
   resumed?: boolean
+  sessions?: BridgeSession[]
+}
+
+/** One past conversation, as the bridge remembers it. */
+export type BridgeSession = {
+  id: string
+  /** The question that opened it, or absent if it never got one. */
+  title?: string
+  /** When it was last spoken to. */
+  at?: number
 }
 
 /** Every question gets an id so its answer can be told from anyone else's. */
@@ -68,6 +78,7 @@ export type BridgeInfo = {
   models: { id: string; label: string }[]
   efforts: string[]
   resumed: boolean
+  sessions: BridgeSession[]
 }
 let onInfo: ((info: BridgeInfo) => void) | null = null
 export function watchBridgeInfo(fn: (info: BridgeInfo) => void) {
@@ -75,8 +86,14 @@ export function watchBridgeInfo(fn: (info: BridgeInfo) => void) {
 }
 
 /** The settings panel. Any of these restarts the agent session on the bridge;
- *  model and effort keep the conversation, `fresh` starts it over. */
-export function configure(patch: { model?: string; effort?: string; fresh?: boolean }): void {
+ *  model and effort keep the conversation, `fresh` starts it over, and `resume`
+ *  goes back to an earlier one by id. */
+export function configure(patch: {
+  model?: string
+  effort?: string
+  fresh?: boolean
+  resume?: string
+}): void {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'config', ...patch }))
   }
@@ -221,6 +238,7 @@ function dispatch(ws: WebSocket) {
           models: msg.models,
           efforts: Array.isArray(msg.efforts) ? msg.efforts : [],
           resumed: Boolean(msg.resumed),
+          sessions: Array.isArray(msg.sessions) ? msg.sessions : [],
         })
       }
       firstReady.resolve()

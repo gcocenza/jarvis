@@ -49,6 +49,13 @@ export type VoiceHandlers = {
   onUtterance: (text: string) => void
   /** The recogniser is unusable. Distinct from the user saying nothing. */
   onError: (message: string) => void
+  /**
+   * The microphone stopped delivering audio, or started again. Not an error —
+   * the app is still running and will recover on its own if the device does —
+   * so it is reported separately from onError and is worth showing as a state
+   * rather than a one-off notice.
+   */
+  onInputDead: (dead: boolean) => void
 }
 
 export type Voice = {
@@ -340,10 +347,16 @@ function isEcho(heard: string, spoken: string): boolean {
  * apart in one glance.
  */
 export const diag = {
-  /** Which input engine is running: 'elevenlabs' (VAD+Scribe) or 'browser'. */
+  /** Which input engine is running: 'bridge' (VAD + the bridge's /stt chain)
+   *  or 'browser' (the browser's own recogniser). Deliberately not the name of
+   *  a provider: the bridge picks one per utterance and falls back between
+   *  them, so naming one here is a label that goes stale the moment it matters. */
   engine: 'browser',
   /** Whether the microphone pipeline is live. */
   running: false,
+  /** The pipeline is live but the microphone has delivered nothing but hard
+   *  zeros for long enough that the device, not the room, is the explanation. */
+  noInput: false,
   /** Speech segments captured since load. */
   sessions: 0,
   /** The most recent transcript, whatever the mode. */
@@ -385,8 +398,10 @@ if (typeof window !== 'undefined') {
  * Pick the voice engine and start it.
  *
  * Two engines, chosen by what the bridge reported at boot (see capabilities.ts):
- *   - ElevenLabs available -> local voice-activity detection for instant
- *     barge-in, and ElevenLabs Scribe for the words. The reliable path.
+ *   - the bridge can transcribe -> local voice-activity detection for instant
+ *     barge-in, and the bridge's /stt for the words. Which transcriber answers
+ *     is the bridge's business and can change per utterance when one fails, so
+ *     nothing here names a provider. The reliable path.
  *   - nothing configured -> the browser's own SpeechRecognition, so a student
  *     with no keys still has a working assistant. Less robust, but free and
  *     zero-setup, and guarded by a heartbeat so its silent death is recovered.
@@ -406,12 +421,12 @@ export async function startVoice(h: VoiceHandlers): Promise<Voice> {
     )
     return { stop: () => {}, live: () => false }
   }
-  diag.engine = caps().stt ? 'elevenlabs' : 'browser'
-  return caps().stt ? startElevenVoice(h) : startBrowserVoice(h)
+  diag.engine = caps().stt ? 'bridge' : 'browser'
+  return caps().stt ? startBridgeVoice(h) : startBrowserVoice(h)
 }
 
-/** VAD + ElevenLabs Scribe. */
-async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
+/** VAD for the timing, the bridge for the words. */
+async function startBridgeVoice(h: VoiceHandlers): Promise<Voice> {
   let lastWake = 0
   let vad: Vad | null = null
 
@@ -419,8 +434,8 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
    * Segments waiting for the transcriber, oldest first.
    *
    * This was a boolean — `if (transcribing) return` — and that single line was
-   * the worst bug in the pause story. Segments arrive faster than Scribe
-   * answers whenever someone speaks in bursts, which is exactly what pausing
+   * the worst bug in the pause story. Segments arrive faster than the
+   * transcriber answers whenever someone speaks in bursts, which is exactly what pausing
    * mid-sentence looks like, so the second half of the thought was not merely
    * mis-timed, it was silently discarded. Queue instead: nothing a person says
    * out loud gets thrown away because the network was busy.
@@ -566,6 +581,11 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
       diag.running = false
       h.onError(message)
     },
+    onSilence: (isDead) => {
+      diag.noInput = isDead
+      diag.lastError = isDead ? 'no input' : ''
+      h.onInputDead(isDead)
+    },
   })
   diag.running = vad.live()
 
@@ -611,7 +631,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   const Ctor =
     (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
   if (!Ctor) {
-    h.onError('This browser has no speech recognition — use Chrome or Edge, or add an ElevenLabs key.')
+    h.onError('This browser has no speech recognition — use Chrome or Edge, or run the bridge for transcription.')
     return { stop: () => {}, live: () => false }
   }
 
@@ -693,7 +713,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
 
   const bumpSilence = () => {
     clearSilence()
-    // Endpoint on a short quiet gap; the ElevenLabs path tunes this more
+    // Endpoint on a short quiet gap; the bridge path tunes this more
     // finely, but a fixed window is plenty for the fallback.
     silenceTimer = setTimeout(emit, 700)
   }

@@ -20,6 +20,7 @@ import { useStore } from '../store'
 
 type VoiceDiag = {
   running: boolean
+  noInput: boolean
   sessions: number
   heard: string
   heardAt: number
@@ -113,6 +114,7 @@ export function Diagnostics() {
       />
       <Row k="forced restarts" v={String(v.restarts ?? 0)} bad={(v.restarts ?? 0) > 0} />
       <Row k="mode" v={`${v.mode ?? '—'} (phase ${phase})`} />
+      <Row k="input" v={v.noInput ? 'NO INPUT — mic delivering silence' : 'ok'} bad={Boolean(v.noInput)} />
       <Row k="accepted" v={String(v.accepted ?? 0)} bad={(v.accepted ?? 0) === 0} />
       <Row k="wakes" v={String(v.wakes ?? 0)} />
       <Row k="last heard" v={v.heard ? `"${v.heard}" ${ago(v.heardAt ?? 0)}` : '— nothing yet'} bad={!v.heard} />

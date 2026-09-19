@@ -12,6 +12,7 @@ Protocol:
            {"error": "..."}           if a single transcription failed
 
 Model and compute type come from the environment so the bridge can tune them:
+  JARVIS_STT_LANG        default unset (auto-detect; .en models are English only)
   JARVIS_WHISPER_MODEL   default "base.en"  (tiny.en is faster, small.en sharper)
   JARVIS_WHISPER_COMPUTE default "int8"     (int8 is fast on Apple Silicon CPU)
 """
@@ -31,6 +32,8 @@ def main() -> int:
 
     model_name = os.environ.get("JARVIS_WHISPER_MODEL", "base.en")
     compute = os.environ.get("JARVIS_WHISPER_COMPUTE", "int8")
+    # None lets Whisper detect the language; the .en models ignore it anyway.
+    lang = os.environ.get("JARVIS_STT_LANG") or None
     try:
         model = WhisperModel(model_name, device="cpu", compute_type=compute)
     except Exception as exc:  # noqa: BLE001
@@ -48,8 +51,11 @@ def main() -> int:
         try:
             # The browser's VAD already trimmed silence around the utterance, so
             # no vad_filter here (it would add an onnxruntime dependency for no
-            # gain). English is pinned; JARVIS is spoken to in English.
-            segments, _info = model.transcribe(path, language="en", beam_size=1)
+            # gain). Language comes from the environment: the default .en models
+            # only do English, but pointing JARVIS_WHISPER_MODEL at a
+            # multilingual one (small, medium) and setting JARVIS_STT_LANG makes
+            # the local fallback speak whatever the cloud providers were.
+            segments, _info = model.transcribe(path, language=lang, beam_size=1)
             text = "".join(seg.text for seg in segments).strip()
             sys.stdout.write(json.dumps({"text": text}) + "\n")
         except Exception as exc:  # noqa: BLE001 - one bad clip must not kill the worker

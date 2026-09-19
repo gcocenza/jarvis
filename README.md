@@ -308,8 +308,14 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_ALLOWED_ORIGINS` | local dev | Extra WebSocket origins to accept |
 | `JARVIS_ALLOW_NO_ORIGIN` | off | Accept connections with no `Origin` header |
 | `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
-| `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
-| `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
+| `JARVIS_VOICE_ID` | George (en, British) | ElevenLabs voice id — the voice carries the accent, so this is what picks the language you hear |
+| `JARVIS_TTS_LANG` | — | ISO 639-1 language to enforce, e.g. `pt`. Normalises numbers and dates in that language; flash/turbo v2.5 only |
+| `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice, and Scribe as a transcriber |
+| `GROQ_API_KEY` | — | Optional; transcribes with Groq Whisper, tried first (fastest, multilingual) |
+| `JARVIS_GROQ_STT_MODEL` | `whisper-large-v3-turbo` | Groq transcription model |
+| `JARVIS_STT_LANG` | auto-detect | ISO-639-1 hint for transcription, e.g. `pt` |
+| `JARVIS_WHISPER_MODEL` | `base.en` | Local fallback model; use `small`/`medium` for languages other than English |
+| `JARVIS_WHISPER_COMPUTE` | `int8` | Local fallback compute type |
 | `FISH_AUDIO_API_KEY` | — | Optional; speaks through Fish Audio instead (see below) |
 | `JARVIS_FISH_VOICE_ID` | public JARVIS voice | Fish Audio voice (use your own clone's id) |
 | `JARVIS_FISH_MODEL` | `s2-pro` | Fish Audio model |
@@ -336,8 +342,51 @@ You do not have to touch a flag. Either:
 - Add the key to your `elevenlabs` MCP server's env in `~/.claude.json` — the
   bridge reads it from there too.
 
-Either way, `/health` starts reporting the capability, the browser picks it up on
-the next boot, and both the voice and transcription upgrade automatically.
+Either way, `/health` starts reporting the capability and the browser picks it up
+on the next boot.
+
+### Hearing you
+
+The bridge transcribes through whichever of these is available, in order, and
+falls through to the next one when a request fails:
+
+1. **Groq** (`GROQ_API_KEY`) — Whisper large v3 turbo. Fastest, multilingual, and
+   the one to set if you speak to JARVIS in anything but English.
+2. **ElevenLabs Scribe** (`ELEVENLABS_API_KEY`) — note that an ElevenLabs key
+   needs the `speech_to_text` permission as well as the one for speech; a key
+   scoped only for the voice answers `401` here.
+3. **Local faster-whisper** — no key, no network. Warmed at boot, so it is always
+   behind the others. `pip install --user faster-whisper` to have it. The default
+   `base.en` model is English only: set `JARVIS_WHISPER_MODEL=small` and
+   `JARVIS_STT_LANG=pt` (or your language) to make the offline fallback match.
+
+The chain exists because speaking and hearing used to ride the same key, so one
+expired or under-scoped credential took out both and `/health` still said it was
+listening. `node scripts/check-stt.mjs` boots the bridge with deliberately broken
+cloud keys and asserts it still returns words.
+
+### Going back to an earlier conversation
+
+The bridge already resumes the last conversation on its own, so restarting it
+does not lose your place. Settings also lists the recent ones by their opening
+question — pick one and the bridge reconnects into it. "NEW CONVERSATION" starts
+a fresh one, and the previous one stays in the list.
+
+The history lives in `~/.jarvis/sessions-<workspace hash>.json`, alongside the
+resume pointer, and keeps the last 20. Delete the file to clear it.
+
+### When he stops hearing you
+
+The SIGNAL rail reads `NO INPUT` when the microphone is open and unmuted but has
+delivered nothing but digital silence for twenty seconds — which is what a macOS
+sleep/wake does to Chrome's audio stack. It is deliberately silent while you are
+muted, because muting produces exactly the same hard zeros and a warning that
+fires every time you mute is a warning you learn to ignore.
+
+Reloading the page does not always clear it: the capture is wedged below the
+page. Opening any tab on the same origin and calling `getUserMedia` once tends
+to shake it loose, and quitting other apps holding the microphone (dictation
+tools especially) is the next thing to try, then restarting the browser.
 
 ### Adding a Fish Audio voice
 

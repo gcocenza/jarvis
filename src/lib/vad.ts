@@ -36,6 +36,17 @@ export type VadHandlers = {
   onLevel: (v: number) => void
   /** Capture is impossible — no microphone, or no MediaRecorder support. */
   onError: (message: string) => void
+  /**
+   * The microphone went dead, or came back.
+   *
+   * Distinct from onError, which means capture never started. This one fires
+   * when capture was working and then stopped delivering anything, which is
+   * what a macOS sleep/wake does to Chrome's audio stack: the track stays
+   * `live`, the recorder still runs, and every sample is a hard zero. Nothing
+   * throws and nothing logs, so without this the interface looks like it is
+   * listening for as long as you care to keep talking at it.
+   */
+  onSilence: (dead: boolean) => void
 }
 
 export type Vad = {
@@ -79,6 +90,39 @@ const SILENCE_MS = 650
 /** Nobody speaks one segment for this long; cut it and transcribe what we have. */
 const MAX_MS = 20000
 
+/**
+ * Below this, the input is not quiet — it is off.
+ *
+ * A silent room still reads a few thousandths on the RMS: fans, the street, the
+ * machine itself. A microphone that has stopped delivering reads a hard zero,
+ * and floating point makes that exact. So this is set far below any real room
+ * and far above nothing, which is what makes it safe to act on.
+ */
+const DEAD_RMS = 1e-5
+/**
+ * How long that must hold before saying so. Long enough that no ordinary pause
+ * in a quiet room trips it, short enough to save you from talking to a dead
+ * microphone for a whole conversation.
+ */
+const DEAD_MS = 20000
+
+/**
+ * The whole rule, in one place, so it can be checked without a browser.
+ *
+ * `capturing` is the part that matters and the part that is easy to get wrong:
+ * a muted microphone reads exactly like a broken one, and warning someone that
+ * their microphone is dead every time they mute it teaches them to ignore the
+ * warning. So muted — and hidden, and ended — is never dead, whatever the
+ * energy says.
+ */
+export function micIsDead(s: {
+  capturing: boolean
+  energy: number
+  quietForMs: number
+}): boolean {
+  return s.capturing && s.energy <= DEAD_RMS && s.quietForMs > DEAD_MS
+}
+
 /** The floor adapts slowly upward (a fan spinning up) and quickly downward (a
  *  door closing), so it settles to genuine ambient noise without chasing speech. */
 const FLOOR_UP = 0.0008
@@ -109,12 +153,12 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
         ? 'Microphone access denied — voice input is unavailable.'
         : 'No microphone available.',
     )
-    return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false }) }
+    return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false, dead: false }) }
   }
 
   if (typeof MediaRecorder === 'undefined') {
     h.onError('This browser cannot record audio — voice input is unavailable.')
-    return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false }) }
+    return { stop: () => {}, setGuard: () => {}, live: () => false, meter: () => ({ energy: 0, floor: 0, threshold: 0, speaking: false, dead: false }) }
   }
 
   const mime = pickMime()
@@ -143,6 +187,12 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
   let speechStartedAt = 0
   let lastLoud = 0
   let raf = 0
+
+  // Watchdog state. `lastAlive` only advances while capture is genuinely
+  // expected to produce something, so a muted microphone or a hidden tab holds
+  // it still rather than counting toward a warning.
+  let lastAlive = performance.now()
+  let dead = false
 
   const rms = (): number => {
     analyser.getFloatTimeDomainData(buf)
@@ -200,6 +250,22 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
     }
   }
 
+  /**
+   * Is the microphone supposed to be delivering audio right now?
+   *
+   * Three things make a hard zero completely normal, and none of them is a
+   * fault: the user muted (setMicMuted disables the track, which feeds exact
+   * silence to every consumer — the same reading as a dead device), the tab is
+   * hidden (requestAnimationFrame stops, so the loop is not sampling anything),
+   * or the track has ended (that is a different failure, reported on its own).
+   * Warning in any of those cases is crying wolf at the one person who would
+   * then learn to ignore the warning that matters.
+   */
+  const capturing = (): boolean => {
+    const track = stream.getAudioTracks()[0]
+    return Boolean(track) && track.readyState === 'live' && track.enabled && !document.hidden
+  }
+
   const tick = () => {
     if (stopped) return
     raf = requestAnimationFrame(tick)
@@ -207,6 +273,23 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
     const energy = rms()
     smoothEnergy += (energy - smoothEnergy) * 0.5
     h.onLevel(Math.min(1, smoothEnergy * 12))
+
+    // The watchdog. Runs before the gate so a dead microphone is noticed even
+    // though it can never cross a threshold.
+    const live = capturing()
+    if (!live || energy > DEAD_RMS) {
+      lastAlive = performance.now()
+      if (dead) {
+        dead = false
+        h.onSilence(false)
+      }
+    } else if (
+      !dead &&
+      micIsDead({ capturing: live, energy, quietForMs: performance.now() - lastAlive })
+    ) {
+      dead = true
+      h.onSilence(true)
+    }
 
     // Adapt the floor only when we are confident this is not speech.
     if (!speaking && armedAt === 0) {
@@ -272,6 +355,6 @@ export async function startVad(h: VadHandlers): Promise<Vad> {
       guard = on
     },
     live: () => !stopped,
-    meter: () => ({ energy: smoothEnergy, floor, threshold, speaking }),
+    meter: () => ({ energy: smoothEnergy, floor, threshold, speaking, dead }),
   }
 }

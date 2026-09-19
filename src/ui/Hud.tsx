@@ -146,6 +146,29 @@ function DecodeText({ text }: { text: string }) {
 
 /* --------------------------------------------------------------------- hud */
 
+/**
+ * How one past conversation reads in the list.
+ *
+ * The opening question is the only thing that tells two conversations apart at
+ * a glance — a uuid tells you nothing and a timestamp tells you almost nothing
+ * — so it leads, with the age after it for the cases where you asked much the
+ * same thing twice.
+ */
+function sessionLabel(c: { id: string; title?: string; at?: number }): string {
+  const when = c.at ? sinceLabel(Date.now() - c.at) : ''
+  const name = c.title || `session ${c.id.slice(0, 8)}`
+  return when ? `${name} · ${when}` : name
+}
+
+function sinceLabel(ms: number): string {
+  const mins = Math.round(ms / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.round(hours / 24)}d ago`
+}
+
 export function Hud({
   onStop,
   onSubmitText,
@@ -178,6 +201,7 @@ export function Hud({
   }, [error, setError])
   const muted = useStore((s) => s.muted)
   const setMuted = useStore((s) => s.setMuted)
+  const noInput = useStore((s) => s.noInput)
   const queue = useStore((s) => s.queue)
   const bridge = useStore((s) => s.bridge)
   const settingsOpen = useStore((s) => s.settingsOpen)
@@ -352,6 +376,25 @@ export function Hud({
                   <option value="strict">Strict (nothing heard while he speaks)</option>
                 </select>
               </div>
+              {bridge.sessions.length > 0 && (
+                <div className="settings-row">
+                  <label>Conversation</label>
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value) configure({ resume: e.target.value })
+                    }}
+                    title="Go back to an earlier conversation"
+                  >
+                    <option value="">Current</option>
+                    {bridge.sessions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {sessionLabel(c)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="settings-row settings-actions">
                 <button
                   className="rail-btn"
@@ -376,7 +419,7 @@ export function Hud({
           <div className="meter-fill" style={{ height: `${level * 100}%` }} />
         </div>
         <div className="rail-item mono">
-          {muted ? 'MUTED' : `${(level * 100).toFixed(0).padStart(3, '0')}%`}
+          {muted ? 'MUTED' : noInput ? 'NO INPUT' : `${(level * 100).toFixed(0).padStart(3, '0')}%`}
         </div>
         {phase !== 'offline' && (
           <button
