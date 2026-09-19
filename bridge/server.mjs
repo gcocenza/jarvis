@@ -692,6 +692,10 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
  */
 const TTS_LANG = process.env.JARVIS_TTS_LANG?.trim() || null
 
+/** Last quota reading, and how long one stays fresh. */
+let creditsCache = null
+const CREDITS_TTL = 60_000
+
 /**
  * A voice per language.
  *
@@ -1009,6 +1013,56 @@ const handleRequest = async (req, res) => {
     return res.end()
   }
 
+  /**
+   * What is left of the speech budget.
+   *
+   * Only ElevenLabs has one to report — the local voices are free and Fish
+   * bills from a balance it does not expose per request. The page shows this so
+   * running out is something you watch approaching rather than something you
+   * discover when JARVIS goes quiet mid-demo, which is exactly how it was found.
+   *
+   * Cached, because the page polls and this is a rate-limited upstream that
+   * tells the same story for minutes at a time.
+   */
+  if (req.method === 'GET' && req.url === '/credits') {
+    const key = elevenKey()
+    if (!key) {
+      res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+      return res.end(JSON.stringify({ provider: null }))
+    }
+    const now = Date.now()
+    if (!creditsCache || now - creditsCache.at > CREDITS_TTL) {
+      try {
+        const r = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+          headers: { 'xi-api-key': key },
+          signal: AbortSignal.timeout(5000),
+        })
+        if (r.ok) {
+          const d = await r.json()
+          creditsCache = {
+            at: now,
+            body: {
+              provider: 'elevenlabs',
+              used: Number(d.character_count ?? 0),
+              limit: Number(d.character_limit ?? 0),
+              resetAt: Number(d.next_character_count_reset_unix ?? 0) * 1000 || null,
+              tier: String(d.tier ?? ''),
+            },
+          }
+        } else {
+          // A key without the user_read scope answers 401 here and still
+          // speaks perfectly well, so this is not an error the page should
+          // dramatise — it simply has no number to show.
+          creditsCache = { at: now, body: { provider: 'elevenlabs', unavailable: r.status } }
+        }
+      } catch {
+        creditsCache = { at: now, body: { provider: 'elevenlabs', unavailable: 0 } }
+      }
+    }
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify(creditsCache.body))
+  }
+
   if (req.method === 'GET' && req.url === '/health') {
     // The browser reads this once at boot to decide which voice engine to use.
     // The two flags are independent on purpose: speaking and hearing run on
@@ -1227,8 +1281,21 @@ const handleRequest = async (req, res) => {
         },
       )
       if (!upstream.ok) {
-        res.writeHead(upstream.status, cors)
-        return res.end(await upstream.text())
+        const detail = await upstream.text()
+        /**
+         * Out of credit reads as 401 from ElevenLabs, which is
+         * indistinguishable from a bad key at the status line — and the two
+         * call for opposite reactions: fix your key, versus stop trying until
+         * the quota resets. The body says which, so say it plainly in a header
+         * the page can act on without parsing anyone's error prose.
+         */
+        const spent = /quota_exceeded/.test(detail)
+        if (spent) {
+          creditsCache = null
+          console.warn('[jarvis] tts refused: ElevenLabs quota exhausted')
+        }
+        res.writeHead(upstream.status, { ...cors, 'x-jarvis-tts': spent ? 'quota' : 'error' })
+        return res.end(detail)
       }
 
       // Pipe it through rather than buffering. Waiting for the whole file here

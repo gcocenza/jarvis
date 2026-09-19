@@ -11,6 +11,12 @@ import { caps } from './capabilities'
 import { iso } from './i18n'
 import { useStore } from '../store'
 
+/** Called when the speech budget is refused, so the app can say so once. */
+let onQuotaSpent: (() => void) | null = null
+export function watchQuota(fn: () => void) {
+  onQuotaSpent = fn
+}
+
 /**
  * Speech output.
  *
@@ -356,6 +362,13 @@ export function createSpeaker(): Speaker {
 
   const enqueue = (sentence: string, priority = false) => {
     if (cancelled) return
+    /**
+     * Voice muted: drop the sentence here rather than generating it and not
+     * playing it. The answer is on screen either way, and on a metered engine
+     * the characters are the cost — silencing the speaker while still paying
+     * for every word would be the wrong kind of mute.
+     */
+    if (useStore.getState().voiceMuted) return
     // Shape once here so both engines get the same text — stripped markdown,
     // and the comma before "sir" that buys the beat.
     const text = shape(sentence)
@@ -752,6 +765,16 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
         body: JSON.stringify({ text, lang: iso(useStore.getState().lang) }),
       })
       if (res.ok) return URL.createObjectURL(await res.blob())
+      /*
+       * Out of credit. The bridge marks it, because ElevenLabs reports it as a
+       * 401 that is otherwise indistinguishable from a bad key.
+       *
+       * Muting rather than falling through to the system voice is deliberate:
+       * the fallback is a voice the user has already heard and rejected, and
+       * having him switch to it mid-conversation reads as a fault rather than
+       * as a budget running out. Say what happened, go quiet, let them decide.
+       */
+      if (res.headers.get('x-jarvis-tts') === 'quota') onQuotaSpent?.()
     } catch {
       /* fall through */
     }

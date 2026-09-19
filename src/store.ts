@@ -63,6 +63,17 @@ export type Blade = {
  *  where the browser offers it, and nothing he hears while speaking counts. */
 export type EchoGuard = 'standard' | 'strict'
 
+const VOICE_MUTE_KEY = 'jarvis.voiceMuted'
+/** Remembered, like the microphone mute and the language: someone who works
+ *  with his voice off wants it off tomorrow too. */
+const savedVoiceMuted = (): boolean => {
+  try {
+    return localStorage.getItem(VOICE_MUTE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 const LANG_KEY = 'jarvis.lang'
 /**
  * Remembered across reloads, and on the very first load taken from the browser.
@@ -287,6 +298,15 @@ type State = {
    *  for permission on unmute would be worse); its tracks are disabled and the
    *  voice loop is held deaf. */
   muted: boolean
+  /**
+   * His voice is silenced. Distinct from `muted`, which is the microphone:
+   * this one stops him speaking while you keep talking to him, which is what
+   * you want in a room with other people, on a call, or when the speech budget
+   * has run out. The answer still arrives — it is on screen.
+   */
+  voiceMuted: boolean
+  /** Speech budget, when the active engine has one to report. */
+  credits: { used: number; limit: number; resetAt: number | null } | null
   /** The microphone is open and unmuted but delivering nothing. Its own state
    *  rather than an error banner: it persists while it is true, and the banner
    *  would clear itself after seven seconds and leave the interface lying. */
@@ -356,6 +376,8 @@ type State = {
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
   setNoInput: (noInput: boolean) => void
+  setVoiceMuted: (voiceMuted: boolean) => void
+  setCredits: (credits: State['credits']) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
@@ -388,6 +410,8 @@ export const useStore = create<State>((set) => ({
   bootNote: '',
   muted: true,
   noInput: false,
+  voiceMuted: savedVoiceMuted(),
+  credits: null,
   lang: savedLang(),
   echoGuard: savedEcho(),
   skipBoot: false,
@@ -508,6 +532,15 @@ export const useStore = create<State>((set) => ({
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
   setNoInput: (noInput) => set({ noInput }),
+  setVoiceMuted: (voiceMuted) => {
+    try {
+      localStorage.setItem(VOICE_MUTE_KEY, voiceMuted ? '1' : '0')
+    } catch {
+      /* private mode: the setting lasts the session */
+    }
+    set({ voiceMuted })
+  },
+  setCredits: (credits) => set({ credits }),
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>

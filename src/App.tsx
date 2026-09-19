@@ -6,14 +6,14 @@ import { Ignition } from './ui/Ignition'
 import { Diagnostics } from './ui/Diagnostics'
 import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
-import { createSpeaker, cycleVoice, currentVoiceName } from './lib/tts'
+import { createSpeaker, cycleVoice, currentVoiceName, watchQuota } from './lib/tts'
 import * as sfx from './lib/sfx'
 import * as music from './lib/music'
 import * as hands from './lib/hands'
 import { listenForClap } from './lib/clap'
 import * as camera from './lib/camera'
 import * as kokoro from './lib/kokoro'
-import { TTS_ENGINE } from './config'
+import { TTS_ENGINE, BRIDGE_HTTP_URL } from './config'
 import { forTool, attention } from './lib/fillers'
 import { t as translate, type StringKey } from './lib/i18n'
 import {
@@ -33,7 +33,7 @@ import {
   type Msg,
 } from './lib/brain'
 import { startAnalyser, micLevel, setMicMuted, setEchoStrict } from './lib/audio'
-import { probeCapabilities } from './lib/capabilities'
+import { probeCapabilities, caps } from './lib/capabilities'
 import { env } from './config'
 
 /**
@@ -119,6 +119,7 @@ export default function App() {
   const booting = useRef(false)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const voicePoll = useRef<ReturnType<typeof setInterval> | null>(null)
+  const creditsPoll = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // -- helpers --------------------------------------------------------------
 
@@ -624,6 +625,46 @@ export default function App() {
     // In bridge mode the conversation lives in the agent session, which is tied
     // to the socket — so a drop silently wipes his memory while the transcript
     // on screen still shows it. Better to say so than to let him quietly forget.
+    /**
+     * The speech budget, polled while an engine that meters one is in play.
+     *
+     * A minute is far more often than the number moves, and the bridge caches
+     * it anyway; the point is that the bar is never stale enough to mislead
+     * someone deciding whether to start a long demo.
+     */
+    const readCredits = async () => {
+      if (!caps().tts) return
+      try {
+        const res = await fetch(`${BRIDGE_HTTP_URL}/credits`)
+        if (!res.ok) return
+        const c = (await res.json()) as { limit?: number; used?: number; resetAt?: number | null }
+        store
+          .getState()
+          .setCredits(
+            typeof c.limit === 'number' && c.limit > 0
+              ? { used: Number(c.used ?? 0), limit: c.limit, resetAt: c.resetAt ?? null }
+              : null,
+          )
+      } catch {
+        /* the bar simply does not appear */
+      }
+    }
+    void readCredits()
+    creditsPoll.current = setInterval(() => void readCredits(), 60_000)
+
+    /**
+     * Out of credit: go quiet rather than falling back to a voice the user has
+     * already rejected, and say so once. Silencing mid-sentence is the point —
+     * the refusal arrives while he is mid-answer.
+     */
+    watchQuota(() => {
+      const st = store.getState()
+      if (st.voiceMuted) return
+      st.setVoiceMuted(true)
+      st.setError(say('noticeQuotaSpent'))
+      void readCredits()
+    })
+
     watchConnection((state) => {
       // 'open' is the first successful connect, 'reconnected' every one after.
       // Both mean the same thing here: the bridge is reachable now, and
@@ -884,6 +925,21 @@ export default function App() {
         return
       }
 
+      // V silences his voice. The microphone keeps listening and the answers
+      // keep arriving on screen — this is the one for a room with other people
+      // in it, not for stepping away.
+      if (e.key === 'v' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        const st = store.getState()
+        if (st.phase === 'offline') return
+        const next = !st.voiceMuted
+        st.setVoiceMuted(next)
+        // Muting mid-sentence has to stop the sentence, or the thing you just
+        // silenced keeps talking for another ten seconds.
+        if (next) silence()
+        return
+      }
+
       // Escape: stop the current answer and listen, or stand down when idle.
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -918,6 +974,7 @@ export default function App() {
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKey)
       clearIdle()
+      if (creditsPoll.current) clearInterval(creditsPoll.current)
       if (voicePoll.current) clearInterval(voicePoll.current)
       voice.current?.stop()
       speaker.current?.cancel()

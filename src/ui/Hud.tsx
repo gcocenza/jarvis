@@ -203,6 +203,9 @@ export function Hud({
   const muted = useStore((s) => s.muted)
   const setMuted = useStore((s) => s.setMuted)
   const noInput = useStore((s) => s.noInput)
+  const voiceMuted = useStore((s) => s.voiceMuted)
+  const setVoiceMuted = useStore((s) => s.setVoiceMuted)
+  const credits = useStore((s) => s.credits)
   const lang = useStore((s) => s.lang)
   const setLang = useStore((s) => s.setLang)
   /** Bound to the current language so the call sites stay one short word. */
@@ -456,6 +459,44 @@ export function Hud({
             <span className="mute-icon" />
             {muted ? tr('micOff') : tr('micOn')}
           </button>
+        )}
+        {phase !== 'offline' && (
+          <button
+            className={`mute-btn ${voiceMuted ? 'is-muted' : ''}`}
+            onClick={() => setVoiceMuted(!voiceMuted)}
+            aria-pressed={voiceMuted}
+            title={tr('voiceMuteHint')}
+          >
+            <span className="mute-icon" />
+            {voiceMuted ? tr('voiceOff') : tr('voiceOn')}
+          </button>
+        )}
+        {/*
+          The speech budget, when the engine has one. Shown as a bar rather
+          than a number because the question it answers is "how much is left",
+          not "how many characters have I spent" — and it turns red before it
+          runs out rather than at the moment it does, which is too late to do
+          anything about it.
+        */}
+        {credits && credits.limit > 0 && (
+          <div
+            className="credits"
+            title={
+              credits.resetAt
+                ? `${credits.used.toLocaleString()} / ${credits.limit.toLocaleString()} · ${new Date(credits.resetAt).toLocaleDateString()}`
+                : `${credits.used.toLocaleString()} / ${credits.limit.toLocaleString()}`
+            }
+          >
+            <div className="rail-item mono">
+              {credits.used >= credits.limit ? tr('creditsSpent') : tr('creditsLabel')}
+            </div>
+            <div className="credits-bar">
+              <div
+                className={`credits-fill ${credits.used / credits.limit > 0.9 ? 'is-low' : ''}`}
+                style={{ width: `${Math.min(100, Math.round((1 - credits.used / credits.limit) * 100))}%` }}
+              />
+            </div>
+          </div>
         )}
         {phase !== 'offline' && (
           <button

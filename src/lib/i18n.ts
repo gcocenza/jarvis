@@ -92,6 +92,13 @@ const en = {
   noticeBridgeLost: 'Bridge connection lost — reconnecting.',
   noticeBridgeBack: 'Bridge reconnected. The previous conversation was not kept.',
   audioTest: 'Audio test. If you can hear this, speech output is working, sir.',
+  voiceOn: 'VOICE ON',
+  voiceOff: 'VOICE OFF',
+  voiceMuteHint: 'Silence his voice — answers still appear on screen (V)',
+  creditsLabel: 'VOICE BUDGET',
+  creditsSpent: 'BUDGET SPENT',
+  noticeQuotaSpent:
+    'The speech budget is spent, so his voice is off. Answers still appear on screen.',
   imageUnavailable: 'image unavailable',
   videoUnavailable: 'video unavailable',
 } as const
@@ -165,6 +172,13 @@ const pt: Record<StringKey, string> = {
   noticeBridgeLost: 'Conexão com o bridge perdida — reconectando.',
   noticeBridgeBack: 'Bridge reconectado. A conversa anterior não foi mantida.',
   audioTest: 'Teste de áudio. Se você está ouvindo isto, a saída de voz está funcionando, senhor.',
+  voiceOn: 'VOZ LIGADA',
+  voiceOff: 'VOZ DESLIGADA',
+  voiceMuteHint: 'Silenciar a voz dele — as respostas continuam na tela (V)',
+  creditsLabel: 'CRÉDITOS DE VOZ',
+  creditsSpent: 'CRÉDITOS ESGOTADOS',
+  noticeQuotaSpent:
+    'Os créditos de voz acabaram, então a voz dele está desligada. As respostas continuam na tela.',
   imageUnavailable: 'imagem indisponível',
   videoUnavailable: 'vídeo indisponível',
 }
