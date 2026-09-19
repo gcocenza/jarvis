@@ -1180,6 +1180,13 @@ const handleRequest = async (req, res) => {
       res.writeHead(400, cors)
       return res.end('no text')
     }
+    // What the page actually asked for. The language and the voice are chosen
+    // in two different places — a button in the browser and an env var here —
+    // so when the wrong one comes out, this is the line that says which half
+    // is lying.
+    console.log(
+      `[jarvis] tts lang=${lang ?? '(none sent)'} -> ${langFrom(lang) ?? 'default'} · voice ${voiceFor(langFrom(lang))}`,
+    )
     try {
       const upstream = FISH_KEY
         ? await fetch('https://api.fish.audio/v1/tts', {

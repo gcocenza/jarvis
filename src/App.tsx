@@ -625,12 +625,27 @@ export default function App() {
     // to the socket — so a drop silently wipes his memory while the transcript
     // on screen still shows it. Better to say so than to let him quietly forget.
     watchConnection((state) => {
+      // 'open' is the first successful connect, 'reconnected' every one after.
+      // Both mean the same thing here: the bridge is reachable now, and
+      // whatever the boot probe concluded may have been decided while it
+      // wasn't.
+      if (state === 'open') void probeCapabilities()
       if (state === 'lost') {
         store.getState().setError(say('noticeBridgeLost'))
       } else if (state === 'reconnected') {
         store
           .getState()
           .setError(say('noticeBridgeBack'))
+        /**
+         * Ask again what the bridge can do.
+         *
+         * The probe used to run once, during boot. Reload the page in the
+         * second the bridge happens to be restarting and it answers "browser
+         * only" — so the whole session speaks in the OS voice and transcribes
+         * in the browser, silently, until the page is reloaded again. The
+         * bridge coming back is exactly the moment that answer is stale.
+         */
+        void probeCapabilities()
       }
     })
     const warming = warm().catch((err: Error) => s.setError(err.message))
