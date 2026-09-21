@@ -88,6 +88,22 @@ export function watchBridgeInfo(fn: (info: BridgeInfo) => void) {
 /** The settings panel. Any of these restarts the agent session on the bridge;
  *  model and effort keep the conversation, `fresh` starts it over, and `resume`
  *  goes back to an earlier one by id. */
+/**
+ * A config change the socket was not up to carry, held until it is.
+ *
+ * This used to be dropped: `if (open) send()`, and nothing at all otherwise.
+ * The bridge restarts — a crash, a code change, someone restarting it to pick
+ * up an environment variable — and every one of those is a window where the
+ * button on screen still clicks, still looks like it worked, and does nothing.
+ * Observed as "NEW CONVERSATION" appearing to work while a whole conversation
+ * about a new topic went on being appended to the previous one.
+ *
+ * Held rather than refused because the user's intent outlives a reconnect that
+ * takes a second: they asked for a fresh conversation, and they should get one
+ * even if the socket happened to be down when they asked.
+ */
+let pendingConfig: Record<string, unknown> | null = null
+
 export function configure(patch: {
   model?: string
   effort?: string
@@ -96,8 +112,14 @@ export function configure(patch: {
 }): void {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'config', ...patch }))
+    return
   }
+  // Merge rather than replace: two changes made while disconnected are two
+  // changes, and the later one should not silently discard the earlier.
+  pendingConfig = { ...(pendingConfig ?? {}), ...patch }
+  void connect()
 }
+
 
 /** Panels arrive out of band — they're pushed while a turn is in flight,
  *  not returned by it. */
@@ -313,6 +335,13 @@ function connect(): Promise<WebSocket> {
       attempt = 0
       dispatch(ws)
       settle(null)
+      // Anything asked for while the socket was down goes now, before the
+      // first question can land in the session it was meant to replace.
+      if (pendingConfig) {
+        const patch = pendingConfig
+        pendingConfig = null
+        ws.send(JSON.stringify({ type: 'config', ...patch }))
+      }
       onConnection?.(everConnected ? 'reconnected' : 'open')
       everConnected = true
     }
