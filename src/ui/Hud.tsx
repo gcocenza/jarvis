@@ -206,6 +206,8 @@ export function Hud({
   const voiceMuted = useStore((s) => s.voiceMuted)
   const setVoiceMuted = useStore((s) => s.setVoiceMuted)
   const credits = useStore((s) => s.credits)
+  const voiceSpeed = useStore((s) => s.voiceSpeed)
+  const setVoiceSpeed = useStore((s) => s.setVoiceSpeed)
   const lang = useStore((s) => s.lang)
   const setLang = useStore((s) => s.setLang)
   /** Bound to the current language so the call sites stay one short word. */
@@ -373,6 +375,28 @@ export function Hud({
                     </option>
                   ))}
                 </select>
+              </div>
+              {/*
+                A range rather than a dropdown: the useful move here is one
+                notch faster and listen, not picking a number off a list. Five
+                per cent a step is about the smallest change that is audible
+                over a sentence.
+              */}
+              <div className="settings-row">
+                <label>{tr('settingsSpeed')}</label>
+                <div className="speed">
+                  <input
+                    type="range"
+                    min={0.7}
+                    max={1.6}
+                    step={0.05}
+                    value={voiceSpeed}
+                    onChange={(e) => setVoiceSpeed(Number(e.target.value))}
+                  />
+                  <span className="speed-value mono">
+                    {voiceSpeed === 1 ? tr('speedNormal') : `${voiceSpeed.toFixed(2)}×`}
+                  </span>
+                </div>
               </div>
               <div className="settings-row">
                 <label>{tr('settingsNoise')}</label>

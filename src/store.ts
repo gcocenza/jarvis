@@ -63,6 +63,18 @@ export type Blade = {
  *  where the browser offers it, and nothing he hears while speaking counts. */
 export type EchoGuard = 'standard' | 'strict'
 
+const SPEED_KEY = 'jarvis.voiceSpeed'
+/** Clamped on the way in as well as on the way out: a stored value can be
+ *  anything, including a string someone typed into devtools. */
+const savedSpeed = (): number => {
+  try {
+    const n = Number(localStorage.getItem(SPEED_KEY))
+    return Number.isFinite(n) && n > 0 ? Math.min(1.6, Math.max(0.7, n)) : 1
+  } catch {
+    return 1
+  }
+}
+
 const VOICE_MUTE_KEY = 'jarvis.voiceMuted'
 /** Remembered, like the microphone mute and the language: someone who works
  *  with his voice off wants it off tomorrow too. */
@@ -305,6 +317,12 @@ type State = {
    * has run out. The answer still arrives — it is on screen.
    */
   voiceMuted: boolean
+  /**
+   * How fast he speaks, as a multiplier on each engine's own natural pace.
+   * Every provider takes a different range, so this is clamped again per
+   * provider rather than trusted as-is.
+   */
+  voiceSpeed: number
   /** Speech budget, when the active engine has one to report. */
   credits: { used: number; limit: number; resetAt: number | null } | null
   /** The microphone is open and unmuted but delivering nothing. Its own state
@@ -378,6 +396,7 @@ type State = {
   setNoInput: (noInput: boolean) => void
   setVoiceMuted: (voiceMuted: boolean) => void
   setCredits: (credits: State['credits']) => void
+  setVoiceSpeed: (voiceSpeed: number) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
@@ -411,6 +430,7 @@ export const useStore = create<State>((set) => ({
   muted: true,
   noInput: false,
   voiceMuted: savedVoiceMuted(),
+  voiceSpeed: savedSpeed(),
   credits: null,
   lang: savedLang(),
   echoGuard: savedEcho(),
@@ -541,6 +561,15 @@ export const useStore = create<State>((set) => ({
     set({ voiceMuted })
   },
   setCredits: (credits) => set({ credits }),
+  setVoiceSpeed: (voiceSpeed) => {
+    const v = Math.min(1.6, Math.max(0.7, voiceSpeed))
+    try {
+      localStorage.setItem(SPEED_KEY, String(v))
+    } catch {
+      /* private mode: the setting lasts the session */
+    }
+    set({ voiceSpeed: v })
+  },
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>

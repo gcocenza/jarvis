@@ -718,6 +718,21 @@ const fishVoiceFor = (lang) => {
   const named = lang && process.env[`JARVIS_FISH_VOICE_ID_${String(lang).toUpperCase()}`]?.trim()
   return named || FISH_VOICE_ID
 }
+/**
+ * Speaking-rate multiplier from a request, clamped to what a provider accepts.
+ *
+ * The ranges genuinely differ — ElevenLabs refuses anything outside 0.7 to 1.2
+ * with a 422, Fish takes 0.5 to 2.0 — so a single number from the browser has
+ * to be narrowed per provider rather than forwarded. Anything unparseable
+ * means "leave it alone", which is not the same as 1.0: a provider's own
+ * default may not be 1.0 and is none of our business.
+ */
+const speedFor = (raw, lo, hi) => {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.min(hi, Math.max(lo, n))
+}
+
 /** ISO 639-1 from a request, or the bridge default. Anything that is not two
  *  plain letters is ignored rather than forwarded to the API. */
 const langFrom = (raw) => {
@@ -1274,8 +1289,9 @@ const handleRequest = async (req, res) => {
     // so a malformed body used to take the entire bridge down with it.
     let text
     let lang
+    let speed
     try {
-      ;({ text, lang } = JSON.parse(body || '{}'))
+      ;({ text, lang, speed } = JSON.parse(body || '{}'))
     } catch {
       res.writeHead(400, cors)
       return res.end('bad json')
@@ -1305,6 +1321,7 @@ const handleRequest = async (req, res) => {
               reference_id: fishVoiceFor(langFrom(lang)),
               format: 'mp3',
               latency: 'balanced',
+              ...(speedFor(speed, 0.5, 2) ? { prosody: { speed: speedFor(speed, 0.5, 2) } } : {}),
             }),
           })
         : await fetch(
@@ -1325,7 +1342,9 @@ const handleRequest = async (req, res) => {
             voice_settings: {
               stability: 0.4,
               similarity_boost: 0.75,
-              speed: 1.05,
+              // 1.05 is the character's pace; the listener's multiplier rides
+              // on top of it, within what the API will accept.
+              speed: speedFor(speed, 0.7, 1.2) ? speedFor(1.05 * speed, 0.7, 1.2) : 1.05,
             },
           }),
         },

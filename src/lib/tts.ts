@@ -493,10 +493,11 @@ export function createSpeaker(): Speaker {
       const voice = pickVoice()
       if (voice) u.voice = voice
       u.lang = voice?.lang ?? 'en-GB'
-      // Deliberate, and deliberately invariant — the character's pace does not
-      // change with stakes, and that steadiness is most of the effect. This
-      // lands around 130 wpm, below the median for film dialogue.
-      u.rate = 0.92
+      // 0.92 lands around 130 wpm, below the median for film dialogue, and is
+      // the character's natural pace — steady, unhurried. The multiplier is
+      // the listener's, applied on top: what is invariant is the delivery, not
+      // how fast you need to get through it.
+      u.rate = Math.min(2, Math.max(0.5, 0.92 * useStore.getState().voiceSpeed))
       // Mid-baritone, and *not* pushed lower for gravitas. The voice is
       // clarity-weighted rather than chest-weighted; dropping it further reads
       // as a film-trailer voiceover, which is the wrong character entirely.
@@ -762,7 +763,11 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
         // The language rides with the text rather than being configured once on
         // the bridge, because it can change between one sentence and the next
         // now that it is a button on screen.
-        body: JSON.stringify({ text, lang: iso(useStore.getState().lang) }),
+        body: JSON.stringify({
+          text,
+          lang: iso(useStore.getState().lang),
+          speed: useStore.getState().voiceSpeed,
+        }),
       })
       if (res.ok) return URL.createObjectURL(await res.blob())
       /*

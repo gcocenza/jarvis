@@ -23,7 +23,7 @@ assert.ok(keys.length > 40, `expected the whole table, found ${keys.length} keys
 const LANGS: Lang[] = ['en', 'pt']
 
 /** Words that are the same in both languages, or proper nouns. */
-const SHARED = new Set(['ONLINE', 'JARVIS'])
+const SHARED = new Set(['ONLINE', 'JARVIS', 'normal'])
 
 for (const key of new Set(keys)) {
   for (const lang of LANGS) {
