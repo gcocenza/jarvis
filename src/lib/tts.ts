@@ -431,6 +431,19 @@ export function createSpeaker(): Speaker {
         prime(queue[0])
 
         await speakOne(item)
+
+        /**
+         * A held beat before the next sentence.
+         *
+         * Skipped after the last one: a pause at the end of the answer is not
+         * a pause between sentences, it is the user waiting to be allowed to
+         * speak. Skipped when cancelled for the same reason — a barge-in that
+         * still has to sit through a beat is a barge-in that did not work.
+         */
+        const gap = useStore.getState().voiceGap
+        if (gap > 0 && queue.length && !cancelled) {
+          await new Promise<void>((resolve) => setTimeout(resolve, gap))
+        }
       }
     } finally {
       pumping = false

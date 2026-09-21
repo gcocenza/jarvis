@@ -208,6 +208,8 @@ export function Hud({
   const credits = useStore((s) => s.credits)
   const voiceSpeed = useStore((s) => s.voiceSpeed)
   const setVoiceSpeed = useStore((s) => s.setVoiceSpeed)
+  const voiceGap = useStore((s) => s.voiceGap)
+  const setVoiceGap = useStore((s) => s.setVoiceGap)
   const lang = useStore((s) => s.lang)
   const setLang = useStore((s) => s.setLang)
   /** Bound to the current language so the call sites stay one short word. */
@@ -395,6 +397,22 @@ export function Hud({
                   />
                   <span className="speed-value mono">
                     {voiceSpeed === 1 ? tr('speedNormal') : `${voiceSpeed.toFixed(2)}×`}
+                  </span>
+                </div>
+              </div>
+              <div className="settings-row">
+                <label>{tr('settingsGap')}</label>
+                <div className="speed">
+                  <input
+                    type="range"
+                    min={0}
+                    max={800}
+                    step={50}
+                    value={voiceGap}
+                    onChange={(e) => setVoiceGap(Number(e.target.value))}
+                  />
+                  <span className="speed-value mono">
+                    {voiceGap === 0 ? tr('speedNormal') : `+${voiceGap}ms`}
                   </span>
                 </div>
               </div>

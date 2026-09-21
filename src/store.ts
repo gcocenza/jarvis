@@ -63,6 +63,17 @@ export type Blade = {
  *  where the browser offers it, and nothing he hears while speaking counts. */
 export type EchoGuard = 'standard' | 'strict'
 
+const GAP_KEY = 'jarvis.voiceGap'
+/** Milliseconds held between spoken sentences. Clamped in, as well as out. */
+const savedGap = (): number => {
+  try {
+    const n = Number(localStorage.getItem(GAP_KEY))
+    return Number.isFinite(n) && n >= 0 ? Math.min(800, n) : 0
+  } catch {
+    return 0
+  }
+}
+
 const SPEED_KEY = 'jarvis.voiceSpeed'
 /** Clamped on the way in as well as on the way out: a stored value can be
  *  anything, including a string someone typed into devtools. */
@@ -323,6 +334,14 @@ type State = {
    * provider rather than trusted as-is.
    */
   voiceSpeed: number
+  /**
+   * A held beat between one spoken sentence and the next, in milliseconds.
+   *
+   * Zero is the natural delivery — the clips carry no padding of their own, so
+   * nothing is being removed here, only added. This is for making him more
+   * deliberate, not for making him faster; the speaking rate does that.
+   */
+  voiceGap: number
   /** Speech budget, when the active engine has one to report. */
   credits: { used: number; limit: number; resetAt: number | null } | null
   /** The microphone is open and unmuted but delivering nothing. Its own state
@@ -397,6 +416,7 @@ type State = {
   setVoiceMuted: (voiceMuted: boolean) => void
   setCredits: (credits: State['credits']) => void
   setVoiceSpeed: (voiceSpeed: number) => void
+  setVoiceGap: (voiceGap: number) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
@@ -431,6 +451,7 @@ export const useStore = create<State>((set) => ({
   noInput: false,
   voiceMuted: savedVoiceMuted(),
   voiceSpeed: savedSpeed(),
+  voiceGap: savedGap(),
   credits: null,
   lang: savedLang(),
   echoGuard: savedEcho(),
@@ -561,6 +582,15 @@ export const useStore = create<State>((set) => ({
     set({ voiceMuted })
   },
   setCredits: (credits) => set({ credits }),
+  setVoiceGap: (voiceGap) => {
+    const v = Math.min(800, Math.max(0, Math.round(voiceGap)))
+    try {
+      localStorage.setItem(GAP_KEY, String(v))
+    } catch {
+      /* private mode: the setting lasts the session */
+    }
+    set({ voiceGap: v })
+  },
   setVoiceSpeed: (voiceSpeed) => {
     const v = Math.min(1.6, Math.max(0.7, voiceSpeed))
     try {
