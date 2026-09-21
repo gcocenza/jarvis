@@ -38,6 +38,37 @@ if (body.unavailable !== undefined) {
   process.exit(0)
 }
 
+/**
+ * Fish reports a bare balance with no ceiling, and on the free model that
+ * balance sits at zero while speech works perfectly well. So there is no bar
+ * to draw and nothing is wrong — the only thing to check is that speech
+ * actually comes out, because a zero balance here is easy to mistake for the
+ * failure it is not.
+ */
+if (body.provider === 'fish') {
+  assert.equal(typeof body.credit, 'number', 'fish must report a numeric credit')
+  const tts = await fetch(`${BASE}/tts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: 'teste', lang: 'pt' }),
+  })
+  if (tts.ok) {
+    const bytes = (await tts.arrayBuffer()).byteLength
+    assert.ok(bytes > 1000, `expected audio, got ${bytes} bytes`)
+    console.log(
+      `OK — fish speaks on model ${body.model} with credit ${body.credit} (free tier needs none)`,
+    )
+  } else {
+    assert.equal(
+      tts.headers.get('x-jarvis-tts'),
+      'quota',
+      'a fish refusal for empty API credit must be labelled, or the app cannot automute',
+    )
+    console.log('OK — fish is out of API credit, and the refusal is labelled for automute')
+  }
+  process.exit(0)
+}
+
 assert.equal(typeof body.used, 'number', 'used must be a number')
 assert.equal(typeof body.limit, 'number', 'limit must be a number')
 assert.ok(body.limit > 0, 'limit must be positive for the bar to mean anything')

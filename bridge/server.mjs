@@ -708,6 +708,16 @@ const voiceFor = (lang) => {
   const named = lang && process.env[`JARVIS_VOICE_ID_${String(lang).toUpperCase()}`]?.trim()
   return named || VOICE_ID
 }
+
+/**
+ * The same, for Fish. A voice cloned to read Brazilian Portuguese reading
+ * English is the mirror of the complaint that started all this, so the
+ * language button has to reach this provider too.
+ */
+const fishVoiceFor = (lang) => {
+  const named = lang && process.env[`JARVIS_FISH_VOICE_ID_${String(lang).toUpperCase()}`]?.trim()
+  return named || FISH_VOICE_ID
+}
 /** ISO 639-1 from a request, or the bridge default. Anything that is not two
  *  plain letters is ignored rather than forwarded to the API. */
 const langFrom = (raw) => {
@@ -724,6 +734,14 @@ const langFrom = (raw) => {
 const FISH_KEY = process.env.FISH_AUDIO_API_KEY ?? null
 const FISH_VOICE_ID =
   process.env.JARVIS_FISH_VOICE_ID ?? '41f0953d7a6b4c078445c7e65d620eeb' // public "JARVIS" voice (British, calm)
+/**
+ * Which Fish model answers.
+ *
+ * `s2-pro` bills from "API credit", a balance Fish keeps separate from the
+ * platform credit the website shows — so an account that looks funded answers
+ * 402 here. `s2.1-pro-free` runs on the free tier with a zero balance, which
+ * is what makes Fish usable without a card.
+ */
 const FISH_MODEL = process.env.JARVIS_FISH_MODEL ?? 's2-pro'
 const FISH_STYLE = process.env.JARVIS_FISH_STYLE ?? '[calm] [composed]'
 
@@ -1025,6 +1043,38 @@ const handleRequest = async (req, res) => {
    * tells the same story for minutes at a time.
    */
   if (req.method === 'GET' && req.url === '/credits') {
+    /**
+     * Fish takes over /tts whenever its key is present, so it is the provider
+     * whose balance matters then. It reports a bare credit figure with no
+     * ceiling — there is no "x of y" to draw a bar from, and on the free model
+     * the balance sits at zero and speech works anyway, so a zeroed bar would
+     * be alarming and wrong. Report the number and let the page decide it has
+     * nothing worth showing.
+     */
+    if (FISH_KEY) {
+      const now = Date.now()
+      if (!creditsCache || now - creditsCache.at > CREDITS_TTL) {
+        let body = { provider: 'fish', unavailable: 0 }
+        try {
+          const r = await fetch('https://api.fish.audio/wallet/self/api-credit', {
+            headers: { authorization: `Bearer ${FISH_KEY}` },
+            signal: AbortSignal.timeout(5000),
+          })
+          if (r.ok) {
+            const d = await r.json()
+            body = { provider: 'fish', credit: Number(d.credit ?? 0), model: FISH_MODEL }
+          } else {
+            body = { provider: 'fish', unavailable: r.status }
+          }
+        } catch {
+          /* leave it unavailable */
+        }
+        creditsCache = { at: now, body }
+      }
+      res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+      return res.end(JSON.stringify(creditsCache.body))
+    }
+
     const key = elevenKey()
     if (!key) {
       res.writeHead(200, { ...cors, 'content-type': 'application/json' })
@@ -1252,7 +1302,7 @@ const handleRequest = async (req, res) => {
             },
             body: JSON.stringify({
               text: `${FISH_STYLE} ${text}`,
-              reference_id: FISH_VOICE_ID,
+              reference_id: fishVoiceFor(langFrom(lang)),
               format: 'mp3',
               latency: 'balanced',
             }),
@@ -1289,7 +1339,10 @@ const handleRequest = async (req, res) => {
          * the quota resets. The body says which, so say it plainly in a header
          * the page can act on without parsing anyone's error prose.
          */
-        const spent = /quota_exceeded/.test(detail)
+        // ElevenLabs says quota_exceeded inside a 401; Fish says 402 with a
+        // message about API credit. Same situation, same reaction, two
+        // completely different shapes on the wire.
+        const spent = /quota_exceeded/i.test(detail) || upstream.status === 402
         if (spent) {
           creditsCache = null
           console.warn('[jarvis] tts refused: ElevenLabs quota exhausted')
@@ -1434,7 +1487,7 @@ console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
 // ready and drops out of the chain.
 startWhisper()
 console.log(
-  `[jarvis] speech out ${elevenKey() ? `via ElevenLabs · voice ${VOICE_ID}` : FISH_KEY ? 'via Fish Audio' : 'using browser voice'}` +
+  `[jarvis] speech out ${FISH_KEY ? `via Fish Audio · model ${FISH_MODEL} · voice ${FISH_VOICE_ID}` : elevenKey() ? `via ElevenLabs · voice ${VOICE_ID}` : 'using browser voice'}` +
     (TTS_LANG ? ` · language ${TTS_LANG}` : ''),
 )
 console.log(

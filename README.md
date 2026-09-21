@@ -319,7 +319,8 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_WHISPER_COMPUTE` | `int8` | Local fallback compute type |
 | `FISH_AUDIO_API_KEY` | — | Optional; speaks through Fish Audio instead (see below) |
 | `JARVIS_FISH_VOICE_ID` | public JARVIS voice | Fish Audio voice (use your own clone's id) |
-| `JARVIS_FISH_MODEL` | `s2-pro` | Fish Audio model |
+| `JARVIS_FISH_MODEL` | `s2-pro` | Fish Audio model. `s2-pro` bills from "API credit", a balance Fish keeps separate from the platform credit the website shows, so a funded-looking account can still answer 402; `s2.1-pro-free` runs on the free tier |
+| `JARVIS_FISH_VOICE_ID_<LANG>` | — | Fish voice per language, e.g. `JARVIS_FISH_VOICE_ID_PT` |
 | `JARVIS_FISH_STYLE` | `[calm] [composed]` | Fish Audio delivery tags |
 | `JARVIS_WORKSPACE` | — | Run as your full Claude Code in that folder (see below) |
 | `JARVIS_CLAUDE_PATH` | `~/.local/bin/claude` | `claude` binary used in workspace mode |
