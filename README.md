@@ -218,6 +218,8 @@ fit the strip and the oldest falls off.
 | **"Stop"** (or cancel, wait, hold on) on its own | Cuts him off mid-answer |
 | **Escape** / **STOP** button | Stop the current answer and listen; press again when idle to stand down |
 | **M** / **MIC ON** button | Mute or unmute the microphone for this session |
+| **V** / **VOICE ON** button | Silence his voice. He keeps listening and answers still appear on screen |
+| **PT / EN** on the right rail | Switch the whole interface, spoken lines, wake word, transcription and voice |
 | **NOISE STD / STRICT** button | How hard the mic works to keep JARVIS from hearing himself |
 | Tab strip | Click to show or tuck a blade, double-click to rename, ✕ to close |
 | **V** | Cycle the browser voice |
@@ -420,9 +422,40 @@ tools especially) is the next thing to try, then restarting the browser.
 
 Set `FISH_AUDIO_API_KEY` on the bridge and it takes over speech. Set
 `JARVIS_FISH_VOICE_ID` to your own cloned voice, or leave it for the public
-JARVIS voice. Transcription still uses ElevenLabs if that key is present, and
-the browser otherwise. Fish Audio bills the API from **API credit**, separate
-from plan credits: a `402 Insufficient API credit` error means topping that up.
+JARVIS voice, and `JARVIS_FISH_VOICE_ID_PT` / `_EN` to give each language its
+own. Transcription still uses ElevenLabs if that key is present, and the
+browser otherwise.
+
+Two things about Fish that cost an afternoon to find:
+
+- It bills the API from **API credit**, a balance kept separate from the plan
+  credit the website shows. An account that looks funded answers
+  `402 Insufficient API credit`.
+- The default model, `s2-pro`, draws on that balance. `s2.1-pro-free` runs on
+  the free tier with a zero balance, and takes any voice in the catalogue —
+  the free tier limits the model, not the voice. Set
+  `JARVIS_FISH_MODEL=s2.1-pro-free`.
+
+### How he speaks
+
+Three controls in settings, all remembered:
+
+| Control | Does |
+|---|---|
+| **Speaking rate** | 0.70× to 1.60× on top of the character's own pace. Clamped per provider — ElevenLabs refuses anything outside 0.7–1.2 |
+| **Pause between sentences** | Adds a held beat, 0 to 800ms. It only lengthens: the clips carry no padding to remove |
+| **Voice budget** | A bar of what is left, when the engine meters it. Red past 90%, and running out mutes him and says so rather than switching to a voice you did not choose |
+
+The budget bar needs the ElevenLabs key to carry the **`user_read`** scope. A
+key without it speaks perfectly well; there is simply no number to show. Fish
+reports a bare balance with no ceiling, so no bar is drawn.
+
+Speech is streamed rather than downloaded: the page posts a sentence to
+`/tts/prepare`, gets a ticket, and points an `<audio>` element at
+`/tts/stream/<id>`. Measured on a long sentence, audio starts at 0.9s instead
+of 4.4s. Tickets are single-use and expire in a minute. If a streamed sentence
+fails to play, the session falls back to the one-shot `POST /tts` for the rest
+of its life — streaming is an optimisation, speaking at all is not.
 
 ---
 
@@ -460,6 +493,27 @@ JARVIS_WORKSPACE=/path/to/your/project npm run start:workspace
 `start:workspace` turns writes on, and in workspace mode that bypasses
 permission prompts entirely. Terminal-only output (code blocks, report lines,
 insight boxes) is filtered out before it is spoken.
+
+---
+
+## Checks
+
+Small scripts, no test framework. Each one guards a bug that was found the
+expensive way, and each says what it is protecting in its own header. Run any
+of them directly.
+
+| Script | Guards |
+|---|---|
+| `node scripts/check-stt.mjs` | Transcription falls through Groq → Scribe → local Whisper when cloud keys are broken |
+| `npx tsx scripts/check-i18n.ts` | No untranslated or empty string, fillers answer in both languages, first load follows the browser |
+| `npx tsx scripts/check-mic-watchdog.ts` | The dead-microphone warning never fires on a muted one |
+| `npx tsx scripts/check-music.ts` | A cue that has played out is not resurrected, deliberate restarts still play |
+| `node scripts/check-sessions.mjs` | Conversation history orders by last use and keeps each its opening name |
+| `node scripts/check-credits.mjs` | The budget reads, and a refusal for spent credit is labelled so automute works |
+| `node scripts/check-speed.mjs` | Every speaking rate, and junk, still produces speech |
+| `node scripts/check-stream.mjs` | Tickets are instant, single-use, and the stream really streams |
+
+The last three need the bridge running.
 
 ---
 
