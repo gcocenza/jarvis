@@ -11,6 +11,24 @@ import { caps } from './capabilities'
 import { iso } from './i18n'
 import { useStore } from '../store'
 
+/**
+ * Ask the bridge why the last sentence would not play.
+ *
+ * Only ever called after a failure, so the extra request costs nothing in the
+ * normal case. The bridge is the only party that saw the upstream's answer.
+ */
+async function askWhyRefused(): Promise<void> {
+  if (BACKEND !== 'bridge') return
+  try {
+    const res = await fetch(`${BRIDGE_HTTP_URL}/credits`)
+    if (!res.ok) return
+    const body = (await res.json()) as { lastRefusal?: string }
+    if (body.lastRefusal === 'quota') onQuotaSpent?.()
+  } catch {
+    /* if the bridge cannot say, the generic failure count stands */
+  }
+}
+
 /** Called when the speech budget is refused, so the app can say so once. */
 let onQuotaSpent: (() => void) | null = null
 export function watchQuota(fn: () => void) {
@@ -649,10 +667,13 @@ export function createSpeaker(): Speaker {
       }
       tick()
 
+      // Declared before `finish`, which clears it.
+      let stall: ReturnType<typeof setTimeout> | null = null
       let done = false
       const finish = () => {
         if (done) return
         done = true
+        if (stall) clearTimeout(stall)
         cancelAnimationFrame(raf)
         outLevel = 0.12
         URL.revokeObjectURL(url)
@@ -662,17 +683,41 @@ export function createSpeaker(): Speaker {
       // Sound is genuinely coming out. This is the cloud/neural counterpart of
       // SpeechSynthesisUtterance.onstart, and it is what makes the diagnostics
       // verdict — and the T self-test — tell the truth on the premium path.
+      // The handler itself is set below, with the stall watchdog it clears.
+      audio.onended = finish
+      /**
+       * A streamed source can run dry and sit there.
+       *
+       * A blob is all present before playback starts, so it either plays or
+       * errors. A MediaSource can stall waiting for bytes that never come —
+       * the network dropped, the upstream hung — and a stalled element fires
+       * neither `ended` nor `error`. Without this the promise behind it never
+       * settles and the whole speech queue stops for the life of the page.
+       */
+      const armStall = () => {
+        if (stall) clearTimeout(stall)
+        stall = setTimeout(() => {
+          diag.failures++
+          diag.lastError = 'stalled'
+          finish()
+        }, 10_000)
+      }
+      audio.onwaiting = armStall
+      audio.onstalled = armStall
       audio.onplaying = () => {
+        if (stall) clearTimeout(stall)
+        stall = null
         diag.started++
         diag.lastError = ''
       }
-      audio.onended = finish
       audio.onerror = () => {
-        // A decode or network failure on a blob we already hold is rare, but
-        // silent when it happens: the sentence simply never plays and the queue
-        // moves on. Count it rather than letting it look like nothing was said.
+        // A sentence that never plays is silent in both senses. Count it, and
+        // ask the bridge whether the reason was money — a streamed URL cannot
+        // carry the header that used to say so, and running out of credit is
+        // the one failure here with a specific thing to tell the user.
         diag.failures++
         diag.lastError = 'audio-element'
+        void askWhyRefused()
         finish()
       }
       // The one that matters for barge-in: cancel() pauses the element, and a
@@ -770,12 +815,41 @@ export function createSpeaker(): Speaker {
 async function fetchCloudAudio(text: string): Promise<string | null> {
   if (BACKEND === 'bridge') {
     try {
-      const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
+      /**
+       * Two steps, so the audio can start before it has finished generating.
+       *
+       * Measured against the bridge: a sentence's first byte lands at about
+       * 0.6s and its last at about 1.7s. Fetching into a blob made every
+       * sentence wait for its own generation to finish — which is most of
+       * "the text appears instantly and then nothing happens".
+       *
+       * An <audio> element plays an mp3 progressively from a URL with no help
+       * from us, so the win is free as long as the URL is a GET. The text has
+       * no business in a query string, hence the ticket: post the sentence,
+       * get an id, point the element at it.
+       */
+      const prep = await fetch(`${BRIDGE_HTTP_URL}/tts/prepare`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         // The language rides with the text rather than being configured once on
         // the bridge, because it can change between one sentence and the next
         // now that it is a button on screen.
+        body: JSON.stringify({
+          text,
+          lang: iso(useStore.getState().lang),
+          speed: useStore.getState().voiceSpeed,
+        }),
+      })
+      if (prep.ok) {
+        const { id } = (await prep.json()) as { id?: string }
+        if (id) return `${BRIDGE_HTTP_URL}/tts/stream/${id}`
+      }
+
+      // The ticket endpoint is not there — an older bridge, most likely. Fall
+      // back to the one-shot POST, which still speaks, just later.
+      const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           text,
           lang: iso(useStore.getState().lang),

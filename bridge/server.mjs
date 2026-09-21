@@ -25,7 +25,7 @@ import { startWhisper, whisperReady, whisperTranscribe, whisperUnavailable } fro
 import { readSessions, noteSession as writeSession } from './sessions.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
@@ -692,6 +692,21 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
  */
 const TTS_LANG = process.env.JARVIS_TTS_LANG?.trim() || null
 
+/**
+ * Whether the last refusal was about money rather than correctness.
+ *
+ * An <audio> element streaming from a URL cannot read response headers, so the
+ * `x-jarvis-tts` marker is invisible on the path that matters now. The page
+ * asks here instead, once, when a sentence fails to play.
+ */
+let lastRefusal = null
+
+/** Sentences posted but not yet fetched, by ticket. */
+const tickets = new Map()
+/** Long enough for an element to start loading, short enough that an abandoned
+ *  sentence does not linger. */
+const TICKET_TTL = 60_000
+
 /** Last quota reading, and how long one stays fresh. */
 let creditsCache = null
 const CREDITS_TTL = 60_000
@@ -1032,6 +1047,94 @@ function corsFor(req) {
 // One HTTP server for both the speech proxy and the WebSocket upgrade.
 const http = await import('node:http')
 
+/**
+ * Generate one sentence and pipe it to `res`.
+ *
+ * Shared by the POST endpoint (which answers with the whole file) and the
+ * ticketed GET one (which an <audio> element streams). Same provider choice,
+ * same quota labelling, one place to change either.
+ */
+async function speak(res, cors, text, lang, speed) {
+  try {
+    const upstream = FISH_KEY
+      ? await fetch('https://api.fish.audio/v1/tts', {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${FISH_KEY}`,
+            model: FISH_MODEL,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: `${FISH_STYLE} ${text}`,
+            reference_id: fishVoiceFor(langFrom(lang)),
+            format: 'mp3',
+            latency: 'balanced',
+            ...(speedFor(speed, 0.5, 2) ? { prosody: { speed: speedFor(speed, 0.5, 2) } } : {}),
+          }),
+        })
+      : await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceFor(langFrom(lang))}/stream` +
+        // 22kHz mono is half the bytes of 44kHz and indistinguishable through
+        // a laptop speaker; optimize_streaming_latency=3 trades a little
+        // prosody for a much earlier first byte.
+        `?output_format=mp3_22050_32&optimize_streaming_latency=3`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': key, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          // Flash is the low-latency model — a conversation needs speed more
+          // than it needs the last few percent of quality.
+          model_id: 'eleven_flash_v2_5',
+          ...(langFrom(lang) ? { language_code: langFrom(lang) } : {}),
+          voice_settings: {
+            stability: 0.4,
+            similarity_boost: 0.75,
+            // 1.05 is the character's pace; the listener's multiplier rides
+            // on top of it, within what the API will accept.
+            speed: speedFor(speed, 0.7, 1.2) ? speedFor(1.05 * speed, 0.7, 1.2) : 1.05,
+          },
+        }),
+      },
+    )
+    if (!upstream.ok) {
+      const detail = await upstream.text()
+      /**
+       * Out of credit reads as 401 from ElevenLabs, which is
+       * indistinguishable from a bad key at the status line — and the two
+       * call for opposite reactions: fix your key, versus stop trying until
+       * the quota resets. The body says which, so say it plainly in a header
+       * the page can act on without parsing anyone's error prose.
+       */
+      // ElevenLabs says quota_exceeded inside a 401; Fish says 402 with a
+      // message about API credit. Same situation, same reaction, two
+      // completely different shapes on the wire.
+      const spent = /quota_exceeded/i.test(detail) || upstream.status === 402
+      lastRefusal = spent ? 'quota' : 'error'
+      if (spent) {
+        creditsCache = null
+        console.warn('[jarvis] tts refused: out of speech credit')
+      }
+      res.writeHead(upstream.status, { ...cors, 'x-jarvis-tts': spent ? 'quota' : 'error' })
+      return res.end(detail)
+    }
+
+    // Pipe it through rather than buffering. Waiting for the whole file here
+    // would throw away everything the streaming endpoint just bought us.
+    lastRefusal = null
+    res.writeHead(200, {
+      ...cors,
+      'content-type': 'audio/mpeg',
+      'cache-control': 'no-cache',
+    })
+    for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
+    return res.end()
+  } catch (err) {
+    res.writeHead(502, cors)
+    return res.end(String(err?.message ?? err))
+  }
+}
+
 const handleRequest = async (req, res) => {
   const origin = req.headers.origin
   if (origin && !originAllowed(origin)) {
@@ -1087,7 +1190,7 @@ const handleRequest = async (req, res) => {
         creditsCache = { at: now, body }
       }
       res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-      return res.end(JSON.stringify(creditsCache.body))
+      return res.end(JSON.stringify({ ...creditsCache.body, lastRefusal }))
     }
 
     const key = elevenKey()
@@ -1125,7 +1228,7 @@ const handleRequest = async (req, res) => {
       }
     }
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-    return res.end(JSON.stringify(creditsCache.body))
+    return res.end(JSON.stringify({ ...creditsCache.body, lastRefusal }))
   }
 
   if (req.method === 'GET' && req.url === '/health') {
@@ -1263,6 +1366,62 @@ const handleRequest = async (req, res) => {
     }
   }
 
+  /**
+   * Hand the page a URL it can stream from, instead of a file it must wait for.
+   *
+   * The browser plays an mp3 progressively from a URL all by itself — no
+   * MediaSource, no buffer juggling, no library. What it cannot do is that
+   * with a POST, and the text has no business being in a query string. So the
+   * page posts the text here, gets a ticket back immediately, and points an
+   * <audio> element at /tts/stream/<ticket>; generation starts when the
+   * element asks for it and the bytes are piped straight through.
+   *
+   * Measured against the bridge: first byte at about 0.7s, last at about 2s.
+   * Waiting for the whole file threw that head start away on every sentence.
+   */
+  if (req.method === 'POST' && req.url === '/tts/prepare') {
+    let body = ''
+    for await (const chunk of req) {
+      body += chunk
+      if (body.length > 64 * 1024) {
+        req.destroy()
+        res.writeHead(400, cors)
+        return res.end('body too large')
+      }
+    }
+    let parsed
+    try {
+      parsed = JSON.parse(body || '{}')
+    } catch {
+      res.writeHead(400, cors)
+      return res.end('bad json')
+    }
+    if (!parsed.text) {
+      res.writeHead(400, cors)
+      return res.end('no text')
+    }
+    // A ticket is single-use and short-lived: it stands for one sentence about
+    // to be spoken, not for a resource anyone should be able to fetch twice.
+    const id = randomUUID()
+    tickets.set(id, { at: Date.now(), ...parsed })
+    for (const [key, t] of tickets) {
+      if (Date.now() - t.at > TICKET_TTL) tickets.delete(key)
+    }
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify({ id }))
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/tts/stream/')) {
+    const id = req.url.slice('/tts/stream/'.length)
+    const ticket = tickets.get(id)
+    if (!ticket) {
+      res.writeHead(404, cors)
+      return res.end('no such ticket')
+    }
+    tickets.delete(id)
+    return speak(res, cors, ticket.text, ticket.lang, ticket.speed)
+  }
+
   if (req.method === 'POST' && req.url === '/tts') {
     const key = elevenKey()
     if (!key && !FISH_KEY) {
@@ -1285,8 +1444,6 @@ const handleRequest = async (req, res) => {
       res.writeHead(400, cors)
       return res.end('body too large')
     }
-    // Inside a try: this handler is async with nothing catching its rejection,
-    // so a malformed body used to take the entire bridge down with it.
     let text
     let lang
     let speed
@@ -1300,89 +1457,7 @@ const handleRequest = async (req, res) => {
       res.writeHead(400, cors)
       return res.end('no text')
     }
-    // What the page actually asked for. The language and the voice are chosen
-    // in two different places — a button in the browser and an env var here —
-    // so when the wrong one comes out, this is the line that says which half
-    // is lying.
-    console.log(
-      `[jarvis] tts lang=${lang ?? '(none sent)'} -> ${langFrom(lang) ?? 'default'} · voice ${voiceFor(langFrom(lang))}`,
-    )
-    try {
-      const upstream = FISH_KEY
-        ? await fetch('https://api.fish.audio/v1/tts', {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${FISH_KEY}`,
-              model: FISH_MODEL,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: `${FISH_STYLE} ${text}`,
-              reference_id: fishVoiceFor(langFrom(lang)),
-              format: 'mp3',
-              latency: 'balanced',
-              ...(speedFor(speed, 0.5, 2) ? { prosody: { speed: speedFor(speed, 0.5, 2) } } : {}),
-            }),
-          })
-        : await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceFor(langFrom(lang))}/stream` +
-          // 22kHz mono is half the bytes of 44kHz and indistinguishable through
-          // a laptop speaker; optimize_streaming_latency=3 trades a little
-          // prosody for a much earlier first byte.
-          `?output_format=mp3_22050_32&optimize_streaming_latency=3`,
-        {
-          method: 'POST',
-          headers: { 'xi-api-key': key, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            text,
-            // Flash is the low-latency model — a conversation needs speed more
-            // than it needs the last few percent of quality.
-            model_id: 'eleven_flash_v2_5',
-            ...(langFrom(lang) ? { language_code: langFrom(lang) } : {}),
-            voice_settings: {
-              stability: 0.4,
-              similarity_boost: 0.75,
-              // 1.05 is the character's pace; the listener's multiplier rides
-              // on top of it, within what the API will accept.
-              speed: speedFor(speed, 0.7, 1.2) ? speedFor(1.05 * speed, 0.7, 1.2) : 1.05,
-            },
-          }),
-        },
-      )
-      if (!upstream.ok) {
-        const detail = await upstream.text()
-        /**
-         * Out of credit reads as 401 from ElevenLabs, which is
-         * indistinguishable from a bad key at the status line — and the two
-         * call for opposite reactions: fix your key, versus stop trying until
-         * the quota resets. The body says which, so say it plainly in a header
-         * the page can act on without parsing anyone's error prose.
-         */
-        // ElevenLabs says quota_exceeded inside a 401; Fish says 402 with a
-        // message about API credit. Same situation, same reaction, two
-        // completely different shapes on the wire.
-        const spent = /quota_exceeded/i.test(detail) || upstream.status === 402
-        if (spent) {
-          creditsCache = null
-          console.warn('[jarvis] tts refused: ElevenLabs quota exhausted')
-        }
-        res.writeHead(upstream.status, { ...cors, 'x-jarvis-tts': spent ? 'quota' : 'error' })
-        return res.end(detail)
-      }
-
-      // Pipe it through rather than buffering. Waiting for the whole file here
-      // would throw away everything the streaming endpoint just bought us.
-      res.writeHead(200, {
-        ...cors,
-        'content-type': 'audio/mpeg',
-        'cache-control': 'no-cache',
-      })
-      for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
-      return res.end()
-    } catch (err) {
-      res.writeHead(502, cors)
-      return res.end(String(err?.message ?? err))
-    }
+    return speak(res, cors, text, lang, speed)
   }
 
   // Speech to text. The browser captures one spoken segment as a compressed
