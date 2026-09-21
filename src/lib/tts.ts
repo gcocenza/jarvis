@@ -12,6 +12,25 @@ import { iso } from './i18n'
 import { useStore } from '../store'
 
 /**
+ * Set once the streamed path has proved it does not work here.
+ *
+ * Streaming is an optimisation; speaking at all is not. Any environment where
+ * the <audio> element will not play the bridge's URL — a proxy that buffers, a
+ * CORS setup we did not anticipate, a browser that refuses the cross-origin
+ * media — must degrade to the one-shot POST that was working before, rather
+ * than to silence. One sentence is lost proving it; every later one is fine.
+ */
+let streamBroken = false
+
+/** Latch the fallback the first time a streamed sentence fails to play. */
+function giveUpOnStreaming(url: string): void {
+  if (streamBroken || !url.startsWith(`${BRIDGE_HTTP_URL}/tts/stream/`)) return
+  streamBroken = true
+  diag.lastError = 'stream-fallback'
+  console.warn('[jarvis] streamed speech did not play — falling back to buffered audio')
+}
+
+/**
  * Ask the bridge why the last sentence would not play.
  *
  * Only ever called after a failure, so the extra request costs nothing in the
@@ -630,7 +649,17 @@ export function createSpeaker(): Speaker {
 
   const playUrl = (url: string, text: string) =>
     new Promise<void>((resolve) => {
-      const audio = new Audio(url)
+      /**
+       * crossOrigin must be set before the source, and it matters more than it
+       * looks. The analyser below routes the element through Web Audio, and
+       * createMediaElementSource on a cross-origin element without CORS
+       * permission does not fail — it outputs silence. The old blob: URLs were
+       * same-origin so this never came up; the bridge's streaming URL is not,
+       * and the first thing it produced was a JARVIS that had stopped speaking.
+       */
+      const audio = new Audio()
+      audio.crossOrigin = 'anonymous'
+      audio.src = url
       currentAudio = audio
       // The generated path is an engine speaking just as much as the OS voice
       // is, so it keeps the same books. `spoken` counts the hand-off, `started`
@@ -699,6 +728,7 @@ export function createSpeaker(): Speaker {
         stall = setTimeout(() => {
           diag.failures++
           diag.lastError = 'stalled'
+          giveUpOnStreaming(url)
           finish()
         }, 10_000)
       }
@@ -717,6 +747,7 @@ export function createSpeaker(): Speaker {
         // the one failure here with a specific thing to tell the user.
         diag.failures++
         diag.lastError = 'audio-element'
+        giveUpOnStreaming(url)
         void askWhyRefused()
         finish()
       }
@@ -828,19 +859,23 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
        * no business in a query string, hence the ticket: post the sentence,
        * get an id, point the element at it.
        */
-      const prep = await fetch(`${BRIDGE_HTTP_URL}/tts/prepare`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // The language rides with the text rather than being configured once on
-        // the bridge, because it can change between one sentence and the next
-        // now that it is a button on screen.
-        body: JSON.stringify({
-          text,
-          lang: iso(useStore.getState().lang),
-          speed: useStore.getState().voiceSpeed,
-        }),
+      // The language rides with the text rather than being configured once on
+      // the bridge, because it can change between one sentence and the next
+      // now that it is a button on screen.
+      const payload = JSON.stringify({
+        text,
+        lang: iso(useStore.getState().lang),
+        speed: useStore.getState().voiceSpeed,
       })
-      if (prep.ok) {
+
+      const prep = streamBroken
+        ? null
+        : await fetch(`${BRIDGE_HTTP_URL}/tts/prepare`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: payload,
+          })
+      if (prep?.ok) {
         const { id } = (await prep.json()) as { id?: string }
         if (id) return `${BRIDGE_HTTP_URL}/tts/stream/${id}`
       }
@@ -850,11 +885,7 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
       const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          lang: iso(useStore.getState().lang),
-          speed: useStore.getState().voiceSpeed,
-        }),
+        body: payload,
       })
       if (res.ok) return URL.createObjectURL(await res.blob())
       /*
