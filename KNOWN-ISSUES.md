@@ -29,17 +29,14 @@ FIXED + pushed:
   tracked the 'ended' *event* rather than the element's own state
   (`2e9757b`).
 
-OPEN (2026-09-21, needs Gabriel's ear):
-- **Streamed speech is unverified.** The voice now plays from a ticketed URL
-  (`/tts/prepare` + `/tts/stream/<id>`) instead of a downloaded blob, which
-  starts audio about 3.5s earlier on a long sentence. Two bugs came out of it,
-  both fixed: Web Audio silently mutes a cross-origin element without
-  `crossOrigin`, and the quota header is invisible to an `<audio>` element.
-  Playback itself could not be verified from outside the app — a fresh tab
-  hits the autoplay policy — so the streamed path latches back to the old
-  buffered POST if a sentence errors or stalls. Watch for `stream-fallback` in
-  the diagnostics panel; if it appears, streaming is off for that session and
-  the cause is still unknown.
+VERIFIED 2026-09-21 by Gabriel on real audio:
+- **Streamed speech.** The voice plays from a ticketed URL (`/tts/prepare` +
+  `/tts/stream/<id>`) instead of a downloaded blob — audio starts about 0.9s
+  into a long sentence rather than 4.4s. Two bugs came out of it on the way:
+  Web Audio silently mutes a cross-origin element without `crossOrigin`, and
+  the quota header is invisible to an `<audio>` element. Both fixed. The path
+  still latches back to the buffered POST if a sentence errors or stalls;
+  `stream-fallback` in the diagnostics panel means that happened.
 
 HELD (Gabriel's call, raised 2026-09-19, deferred):
 - **`work.mp3` is dead weight.** `music.working(true)` is never called — only
