@@ -1,15 +1,14 @@
 /**
  * Score.
  *
- * Three cues, all local files under public/audio/:
+ * Two cues, both local files under public/audio/:
  *   boot-music — the JARVIS start-up sound, once, as the reactor comes up
  *   ambient    — the opening music, once, alongside it
- *   work       — an industrial cue that loops while a tool is running
  *
- * Only `work` repeats. The other two belong to the power-up and are over when
- * it is: an interface that keeps playing music at you for as long as it is open
- * is one you end up muting, and a muted assistant loses the sounds that
- * actually carry meaning — the wake tone, the tool tick, the completion chime.
+ * Neither repeats. Both belong to the power-up and are over when it is: an
+ * interface that keeps playing music at you for as long as it is open is one
+ * you end up muting, and a muted assistant loses the sounds that actually
+ * carry meaning — the wake tone, the tool tick, the completion chime.
  *
  * All of it is Kevin MacLeod (incompetech.com), CC BY 4.0 — free to use with
  * attribution and safe on a monetised channel, unlike the actual film score,
@@ -19,7 +18,7 @@
  * play, and the synthesised bed in sfx.ts covers the ambient case.
  */
 
-type Cue = 'boot-music' | 'ambient' | 'work'
+type Cue = 'boot-music' | 'ambient'
 
 type Track = {
   el: HTMLAudioElement
@@ -41,7 +40,7 @@ const missing = new Set<Cue>()
  * sentence. It never looped; it was raised from the dead once a turn.
  */
 const finished = new Set<Cue>()
-const ALL: Cue[] = ['boot-music', 'ambient', 'work']
+const ALL: Cue[] = ['boot-music', 'ambient']
 let enabled = false
 
 /** Resting levels. Music sits well under the voice — it is atmosphere, not a
@@ -64,16 +63,15 @@ const LEVEL: Record<Cue, number> = {
    * track is present underneath it rather than beside it.
    */
   ambient: 0.1,
-  work: 0.11,
 }
 
 /**
  * Where each cue currently wants to sit, before ducking. Kept separately from
- * the element volume so the two systems compose: a tool starting while JARVIS
- * is speaking brings the work cue in at its ducked level rather than at full,
- * and it rises the rest of the way when he stops.
+ * the element volume so the two systems compose: a cue starting while JARVIS is
+ * speaking comes in at its ducked level rather than at full, and rises the rest
+ * of the way when he stops.
  */
-const want: Record<Cue, number> = { 'boot-music': 0, ambient: 0, work: 0 }
+const want: Record<Cue, number> = { 'boot-music': 0, ambient: 0 }
 
 let ducked = false
 /** How far the bed drops under the voice. */
@@ -85,9 +83,6 @@ function track(cue: Cue): Track | null {
   if (!t) {
     const el = new Audio(`/audio/${cue}.mp3`)
     el.preload = 'auto'
-    // Only the work cue repeats. It has to, because it covers an operation of
-    // unknown length; the two power-up cues are events with an end.
-    el.loop = cue === 'work'
     el.volume = 0
     // A missing file is not an error worth surfacing — the interface just
     // runs without that layer.
@@ -247,18 +242,11 @@ export function stopAll() {
   })
 }
 
-/** The work cue rises while a tool runs and falls the moment it's done. */
-export function working(on: boolean) {
-  set('work', on ? LEVEL.work : 0, on ? 900 : 1400)
-}
-
 /** Pull the bed down while JARVIS speaks so the voice stays clear. */
 export function duck(on: boolean) {
   if (ducked === on) return
   ducked = on
   // Down quickly, back up slowly: the drop has to be out of the way before the
   // first syllable, but a fast recovery is audible as a swell.
-  ;(['ambient', 'work'] as Cue[]).forEach((c) => {
-    if (tracks.has(c)) fadeTo(c, level(c), on ? 250 : 900)
-  })
+  if (tracks.has('ambient')) fadeTo('ambient', level('ambient'), on ? 250 : 900)
 }

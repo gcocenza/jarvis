@@ -38,13 +38,13 @@ VERIFIED 2026-09-21 by Gabriel on real audio:
   still latches back to the buffered POST if a sentence errors or stalls;
   `stream-fallback` in the diagnostics panel means that happened.
 
+RESOLVED:
+- **`work.mp3` was dead weight.** `music.working(true)` was never called, so the
+  2.2 MB *Mechanolith* bed shipped and never played. Deleted 2026-09-22 together
+  with the whole `work` cue: the file, `music.working()`, the four
+  `music.working(false)` calls in `src/App.tsx`, and the CREDITS row.
+
 HELD (Gabriel's call, raised 2026-09-19, deferred):
-- **`work.mp3` is dead weight.** `music.working(true)` is never called — only
-  `working(false)`, in four places (`src/App.tsx:143,208,261,330`). So the
-  2.2 MB, 55-second *Mechanolith* bed at `public/audio/work.mp3` ships and never
-  plays. Either wire it to rise during a tool call or delete the file. Decision
-  deferred 2026-09-19: "vamos deixar por enquanto". Pre-existing, not from this
-  session's work.
 - **Local Whisper fallback is English-only.** The worker takes a language per
   clip now, but the default `JARVIS_WHISPER_MODEL=base.en` ignores it. With the
   UI in PT, if Groq is unreachable the fallback returns mangled English.

@@ -9,7 +9,6 @@ audience can see it (a description box is fine).
 |---|---|---|
 | `boot-music.mp3` | *Impact Prelude* | The swell when the reactor comes up |
 | `ambient.mp3` | *Ossuary 6 – Air* | Low bed looping under the interface |
-| `work.mp3` | *Mechanolith* | Rises while a tool is running |
 
 ## Attribution to paste into a video description
 

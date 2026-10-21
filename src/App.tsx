@@ -141,7 +141,6 @@ export default function App() {
     s.clearQueue()
     s.setCaption('')
     s.setActiveTool(null)
-    music.working(false)
     music.duck(false)
     sfx.duck(false)
     s.setPhase('dormant')
@@ -206,7 +205,6 @@ export default function App() {
             // The answer arriving is what ends the tool phase — a timer would
             // clear the readout while a slow tool was still running.
             store.getState().setActiveTool(null)
-            music.working(false)
             store.getState().pushTurn({ id: turnId, role: 'jarvis', text: '' })
           }
           store.getState().appendToLastTurn(delta)
@@ -259,7 +257,6 @@ export default function App() {
         sfx.duck(false)
         music.duck(false)
         store.getState().setActiveTool(null)
-        music.working(false)
         // Everything said while he was answering runs now, MERGED into one
         // instruction in the order it was said — not one turn per phrase. Three
         // quick additions become a single coherent ask, which is what the user
@@ -328,7 +325,6 @@ export default function App() {
     turn.current++
     interrupt()
     store.getState().setActiveTool(null)
-    music.working(false)
     sfx.duck(false)
     music.duck(false)
   }
